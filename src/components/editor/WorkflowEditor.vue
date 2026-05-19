@@ -17,7 +17,9 @@ import WorkflowEdge from './edges/WorkflowEdge.vue'
 import StickyNoteNode from './nodes/StickyNoteNode.vue'
 import WorkflowNode from './nodes/WorkflowNode.vue'
 import {
+  isWorkflowDocumentData,
   type WorkflowCanvasNode,
+  type WorkflowDocumentData,
 } from './document'
 import type { WorkflowNodeData } from './types'
 import { useWorkflowDocumentStore } from '../../stores/workflowDocument.store'
@@ -39,6 +41,8 @@ const { theme, nodes, edges, viewport } = storeToRefs(workflowDocumentStore)
 const selectedNodeId = ref<string | null>(null)
 const nodeSeed = ref(4)
 const noteSeed = ref(1)
+const importInput = ref<HTMLInputElement | null>(null)
+const documentMessage = ref('')
 
 const nodeTypes = {
   workflow: WorkflowNode,
@@ -55,7 +59,7 @@ syncSeedsFromDocument()
 
 onMounted(() => {
   nextTick(() => {
-    applyViewport(viewport.value)
+    void applyStoredViewport()
   })
 })
 
@@ -233,6 +237,90 @@ function onViewportChangeEnd(nextViewport: ViewportTransform) {
   workflowDocumentStore.setViewport(nextViewport)
 }
 
+function setDocumentMessage(message: string) {
+  documentMessage.value = message
+
+  window.setTimeout(() => {
+    if (documentMessage.value === message) {
+      documentMessage.value = ''
+    }
+  }, 2400)
+}
+
+async function applyStoredViewport() {
+  await applyViewport(viewport.value)
+}
+
+function handleSaveDocument() {
+  workflowDocumentStore.persist()
+  setDocumentMessage('Workflow JSON 已保存到本地文档状态')
+}
+
+function handleResetDocument() {
+  workflowDocumentStore.reset()
+  selectedNodeId.value = null
+  syncSeedsFromDocument()
+
+  nextTick(() => {
+    void applyStoredViewport()
+  })
+
+  setDocumentMessage('Workflow 已重置为默认示例')
+}
+
+function handleExportDocument() {
+  const serializedDocument = workflowDocumentStore.serialize()
+  const blob = new Blob([JSON.stringify(serializedDocument, null, 2)], {
+    type: 'application/json',
+  })
+  const downloadUrl = window.URL.createObjectURL(blob)
+  const link = document.createElement('a')
+
+  link.href = downloadUrl
+  link.download = 'workflow-document.json'
+  link.click()
+
+  window.URL.revokeObjectURL(downloadUrl)
+  setDocumentMessage('Workflow JSON 已导出')
+}
+
+function handleImportClick() {
+  importInput.value?.click()
+}
+
+async function handleImportDocument(event: Event) {
+  const input = event.target as HTMLInputElement | null
+  const file = input?.files?.[0]
+
+  if (!file) {
+    return
+  }
+
+  try {
+    const fileContent = await file.text()
+    const parsedDocument = JSON.parse(fileContent) as unknown
+
+    if (!isWorkflowDocumentData(parsedDocument)) {
+      throw new Error('Invalid workflow document')
+    }
+
+    workflowDocumentStore.replaceDocument(parsedDocument as WorkflowDocumentData)
+    workflowDocumentStore.persist()
+    selectedNodeId.value = null
+    syncSeedsFromDocument()
+
+    await nextTick()
+    await applyStoredViewport()
+    setDocumentMessage('Workflow JSON 导入成功')
+  } catch {
+    setDocumentMessage('导入失败：JSON 格式或结构无效')
+  } finally {
+    if (input) {
+      input.value = ''
+    }
+  }
+}
+
 function tidyCanvas() {
   let index = 0
 
@@ -311,10 +399,24 @@ function minimapNodeColor(node: WorkflowCanvasNode) {
           <button type="button" @click="handleZoomIn">+</button>
           <button type="button" @click="handleFitView">Fit</button>
         </div>
+        <div class="toolbar-group toolbar-doc-actions">
+          <button type="button" @click="handleSaveDocument">保存</button>
+          <button type="button" @click="handleResetDocument">重置</button>
+          <button type="button" @click="handleImportClick">导入 JSON</button>
+          <button type="button" @click="handleExportDocument">导出 JSON</button>
+          <input
+            ref="importInput"
+            type="file"
+            accept="application/json,.json"
+            class="import-input"
+            @change="handleImportDocument"
+          />
+        </div>
         <div class="toolbar-group toolbar-tags">
           <span class="toolbar-tag">Custom nodes</span>
           <span class="toolbar-tag">Custom edges</span>
           <span class="toolbar-tag">Theme tokens</span>
+          <span v-if="documentMessage" class="toolbar-tag toolbar-status">{{ documentMessage }}</span>
         </div>
       </header>
 
@@ -517,6 +619,10 @@ button.primary {
   justify-content: flex-end;
 }
 
+.toolbar-doc-actions {
+  flex-wrap: wrap;
+}
+
 .toolbar-tag {
   display: inline-flex;
   padding: 6px 10px;
@@ -527,6 +633,15 @@ button.primary {
   font-size: 11px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.toolbar-status {
+  color: var(--accent);
+  border-color: rgba(255, 109, 58, 0.24);
+}
+
+.import-input {
+  display: none;
 }
 
 .canvas-frame {
