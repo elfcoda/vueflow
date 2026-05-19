@@ -284,6 +284,22 @@ function handleExportDocument() {
   setDocumentMessage('Workflow JSON 已导出')
 }
 
+function handleExportGraphDocument() {
+  const serializedGraph = workflowDocumentStore.serializeGraph()
+  const blob = new Blob([JSON.stringify(serializedGraph, null, 2)], {
+    type: 'application/json',
+  })
+  const downloadUrl = window.URL.createObjectURL(blob)
+  const link = document.createElement('a')
+
+  link.href = downloadUrl
+  link.download = 'workflow-graph.json'
+  link.click()
+
+  window.URL.revokeObjectURL(downloadUrl)
+  setDocumentMessage('节点边 JSON 已导出')
+}
+
 function handleImportClick() {
   importInput.value?.click()
 }
@@ -404,6 +420,7 @@ function minimapNodeColor(node: WorkflowCanvasNode) {
           <button type="button" @click="handleResetDocument">重置</button>
           <button type="button" @click="handleImportClick">导入 JSON</button>
           <button type="button" @click="handleExportDocument">导出 JSON</button>
+          <button type="button" @click="handleExportGraphDocument">导出节点边 JSON</button>
           <input
             ref="importInput"
             type="file"

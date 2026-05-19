@@ -4,10 +4,12 @@ import type { ViewportTransform } from '@vue-flow/core'
 import {
   createDefaultWorkflowDocument,
   isWorkflowDocumentData,
+  serializeWorkflowGraph,
   WORKFLOW_DOCUMENT_STORAGE_KEY,
   type WorkflowCanvasEdge,
   type WorkflowCanvasNode,
   type WorkflowDocumentData,
+  type WorkflowGraphExportData,
   type WorkflowTheme,
 } from '../components/editor/document'
 
@@ -38,6 +40,10 @@ export const useWorkflowDocumentStore = defineStore('workflow-document', () => {
     }
 
     return JSON.parse(JSON.stringify(snapshot)) as WorkflowDocumentData
+  }
+
+  function serializeGraph(): WorkflowGraphExportData {
+    return serializeWorkflowGraph(serialize())
   }
 
   function persist() {
@@ -113,6 +119,7 @@ export const useWorkflowDocumentStore = defineStore('workflow-document', () => {
     persist,
     reset,
     serialize,
+    serializeGraph,
     replaceDocument,
     setTheme,
     setViewport,
