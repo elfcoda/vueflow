@@ -22,6 +22,7 @@ import {
   type WorkflowDocumentData,
 } from './document'
 import type { WorkflowNodeData } from './types'
+import { sendWorkflowGraphToBackend } from '../../api/workflowGraph'
 import { useWorkflowDocumentStore } from '../../stores/workflowDocument.store'
 
 const fallbackNodeData: WorkflowNodeData = {
@@ -300,6 +301,17 @@ function handleExportGraphDocument() {
   setDocumentMessage('节点边 JSON 已导出')
 }
 
+async function handleSendGraphToBackend() {
+  try {
+    const serializedGraph = workflowDocumentStore.serializeGraph()
+    await sendWorkflowGraphToBackend(serializedGraph)
+    setDocumentMessage('节点边 JSON 已发送到 Python 后端')
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '未知错误'
+    setDocumentMessage(`发送失败：${message}`)
+  }
+}
+
 function handleImportClick() {
   importInput.value?.click()
 }
@@ -421,6 +433,7 @@ function minimapNodeColor(node: WorkflowCanvasNode) {
           <button type="button" @click="handleImportClick">导入 JSON</button>
           <button type="button" @click="handleExportDocument">导出 JSON</button>
           <button type="button" @click="handleExportGraphDocument">导出节点边 JSON</button>
+          <button type="button" @click="handleSendGraphToBackend">发送到 Python</button>
           <input
             ref="importInput"
             type="file"
