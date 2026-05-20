@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { Handle, Position, type NodeProps } from '@vue-flow/core'
 import type { WorkflowNodeData } from '../types'
+import NodeContentWidget from './NodeContentWidget.vue'
 
 const props = defineProps<NodeProps<WorkflowNodeData>>()
 
@@ -46,6 +47,8 @@ const classes = computed(() => [
       <span class="node-pill">Input</span>
       <span class="node-pill">Output</span>
     </div>
+
+    <NodeContentWidget v-if="data.contentWidget" :content="data.contentWidget.content" />
 
     <Handle type="source" :position="Position.Right" class="port port-source" />
   </div>

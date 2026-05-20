@@ -9,8 +9,19 @@ export interface WorkflowGraphPushMessage<TPayload = unknown> {
   raw: MessageEvent<string>
 }
 
+export interface WorkflowGraphPushTransport {
+  onmessage: ((event: MessageEvent<string>) => void) | null
+  onerror: ((event: Event) => void) | null
+  close: () => void
+}
+
 export interface WorkflowGraphPushSubscription {
   close: () => void
+}
+
+export interface WorkflowGraphPushSubscribeOptions {
+  url?: string
+  createEventSource?: (url: string) => WorkflowGraphPushTransport
 }
 
 function resolveWorkflowGraphApiUrl() {
@@ -47,8 +58,10 @@ export async function sendWorkflowGraphToBackend(payload: WorkflowGraphExportDat
 export function subscribeWorkflowGraphPush<TPayload = unknown>(
   onMessage: (message: WorkflowGraphPushMessage<TPayload>) => void,
   onError?: (error: Event) => void,
+  options?: WorkflowGraphPushSubscribeOptions,
 ) {
-  const eventSource = new EventSource(resolveWorkflowGraphEventsUrl())
+  const eventSource = options?.createEventSource?.(options.url ?? resolveWorkflowGraphEventsUrl())
+    ?? new EventSource(options?.url ?? resolveWorkflowGraphEventsUrl())
 
   eventSource.onmessage = (event) => {
     let parsedData: TPayload

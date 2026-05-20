@@ -11,6 +11,7 @@ import {
   type WorkflowTheme,
 } from '../components/editor/document'
 import { createWorkflowGraphExport, type WorkflowGraphExportData } from '../services/workflowGraph'
+import { applyWorkflowNodeContentPush } from '../services/workflowGraphPush'
 
 export const useWorkflowDocumentStore = defineStore('workflow-document', () => {
   const initialDocument = createDefaultWorkflowDocument()
@@ -102,6 +103,10 @@ export const useWorkflowDocumentStore = defineStore('workflow-document', () => {
     }
   }
 
+  function upsertNodeContentWidget(nodeId: string, content: string) {
+    return applyWorkflowNodeContentPush(nodes.value, { nodeId, content })
+  }
+
   watch([theme, nodes, edges, viewport], () => {
     if (isHydrated.value) {
       persist()
@@ -122,5 +127,6 @@ export const useWorkflowDocumentStore = defineStore('workflow-document', () => {
     replaceDocument,
     setTheme,
     setViewport,
+    upsertNodeContentWidget,
   }
 })
