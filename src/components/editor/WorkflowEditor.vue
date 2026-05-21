@@ -44,6 +44,7 @@ const nodeSeed = ref(4)
 const noteSeed = ref(1)
 const importInput = ref<HTMLInputElement | null>(null)
 const documentMessage = ref('')
+const pendingPlacement = ref<'workflow' | 'sticky' | null>(null)
 
 const nodeTypes = {
   workflow: WorkflowNode,
@@ -54,7 +55,13 @@ const edgeTypes = {
   workflow: WorkflowEdge,
 }
 
-const { fitView, zoomIn, zoomOut, setViewport: applyViewport } = useVueFlow()
+const {
+  fitView,
+  zoomIn,
+  zoomOut,
+  setViewport: applyViewport,
+  screenToFlowCoordinate,
+} = useVueFlow()
 
 syncSeedsFromDocument()
 
@@ -134,6 +141,10 @@ function clearSelection() {
   selectedNodeId.value = null
 }
 
+function cancelPendingPlacement() {
+  pendingPlacement.value = null
+}
+
 function toggleTheme() {
   workflowDocumentStore.setTheme(theme.value === 'light' ? 'dark' : 'light')
 }
@@ -150,20 +161,14 @@ function handleFitView() {
   fitView({ padding: 0.18, duration: 300 })
 }
 
-function addActionNode() {
+function createActionNodeAtPosition(position: { x: number; y: number }) {
   nodeSeed.value += 1
   const id = `action-${nodeSeed.value}`
-  const actionCount = workflowNodes.value.length
-  let lastWorkflowNode: WorkflowCanvasNode | undefined
-
-  for (const node of workflowNodes.value) {
-    lastWorkflowNode = node
-  }
 
   nodes.value.push({
     id,
     type: 'workflow',
-    position: { x: 80 + actionCount * 280, y: 320 },
+    position,
     sourcePosition: Position.Right,
     targetPosition: Position.Left,
     data: {
@@ -175,29 +180,19 @@ function addActionNode() {
       hint: 'Click edge to remove, drag node to reorder',
     },
   })
-
-  if (lastWorkflowNode) {
-    edges.value.push({
-      id: `${lastWorkflowNode.id}-${id}`,
-      source: lastWorkflowNode.id,
-      target: id,
-      type: 'workflow',
-      markerEnd: MarkerType.ArrowClosed,
-      data: { kind: 'main', label: 'Main' },
-    })
-  }
-
-  nextTick(() => {
-    fitView({ padding: 0.2, duration: 300 })
-  })
 }
 
-function addStickyNote() {
+function addActionNode() {
+  pendingPlacement.value = 'workflow'
+  setDocumentMessage('点击画布任意位置放置处理节点')
+}
+
+function createStickyNoteAtPosition(position: { x: number; y: number }) {
   noteSeed.value += 1
   nodes.value.push({
     id: `note-${noteSeed.value}`,
     type: 'sticky',
-    position: { x: 160 + noteSeed.value * 110, y: 20 + noteSeed.value * 28 },
+    position,
     data: {
       title: `Note ${noteSeed.value}`,
       subtitle: '说明区',
@@ -206,6 +201,11 @@ function addStickyNote() {
       note: '这是从参考 repo 抽象出的便签交互，用于补充流程说明。',
     },
   })
+}
+
+function addStickyNote() {
+  pendingPlacement.value = 'sticky'
+  setDocumentMessage('点击画布任意位置放置便签')
 }
 
 function syncSeedsFromDocument() {
@@ -252,6 +252,37 @@ async function applyStoredViewport() {
   await applyViewport(viewport.value)
 }
 
+function handlePaneClick(event: MouseEvent) {
+  clearSelection()
+
+  if (!pendingPlacement.value) {
+    return
+  }
+
+  const position = screenToFlowCoordinate({
+    x: event.clientX,
+    y: event.clientY,
+  })
+
+  if (pendingPlacement.value === 'workflow') {
+    createActionNodeAtPosition({
+      x: position.x - 130,
+      y: position.y - 60,
+    })
+    setDocumentMessage('处理节点已放置')
+  }
+
+  if (pendingPlacement.value === 'sticky') {
+    createStickyNoteAtPosition({
+      x: position.x - 125,
+      y: position.y - 80,
+    })
+    setDocumentMessage('便签已放置')
+  }
+
+  cancelPendingPlacement()
+}
+
 function handleSaveDocument() {
   workflowDocumentStore.persist()
   setDocumentMessage('Workflow JSON 已保存到本地文档状态')
@@ -259,6 +290,7 @@ function handleSaveDocument() {
 
 function handleResetDocument() {
   workflowDocumentStore.reset()
+  cancelPendingPlacement()
   selectedNodeId.value = null
   syncSeedsFromDocument()
 
@@ -463,7 +495,7 @@ function minimapNodeColor(node: WorkflowCanvasNode) {
           :max-zoom="1.8"
           :default-edge-options="{ type: 'workflow', markerEnd: MarkerType.ArrowClosed }"
           @connect="onConnect"
-          @pane-click="clearSelection"
+          @pane-click="handlePaneClick"
           @node-click="onNodeClick"
           @viewport-change-end="onViewportChangeEnd"
         >
