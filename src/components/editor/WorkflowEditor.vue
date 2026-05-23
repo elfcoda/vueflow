@@ -374,6 +374,28 @@ function handleInspirationBurst() {
   setDocumentMessage('灵感工作台已生成输出')
 }
 
+function handleTriggerInboxPing() {
+  const updated = workflowDocumentStore.markFirstTriggerNodeUnread()
+
+  if (updated) {
+    setDocumentMessage('Trigger 节点已收到一条后端消息')
+    return
+  }
+
+  setDocumentMessage('没有可用的 trigger 节点')
+}
+
+function handleTriggerInboxDone() {
+  const updated = workflowDocumentStore.clearFirstTriggerNodeUnread()
+
+  if (updated) {
+    setDocumentMessage('Trigger 节点消息已处理完成')
+    return
+  }
+
+  setDocumentMessage('没有可用的 trigger 节点')
+}
+
 async function applyStoredViewport() {
   await applyViewport(viewport.value)
 }
@@ -548,6 +570,8 @@ function minimapNodeColor(node: WorkflowCanvasNode) {
         <button type="button" class="primary" @click="addActionNode">添加处理节点</button>
         <button type="button" @click="addStickyNote">添加便签</button>
         <button type="button" @click="tidyCanvas">整理布局</button>
+        <button type="button" @click="handleTriggerInboxPing">模拟 Trigger 消息</button>
+        <button type="button" @click="handleTriggerInboxDone">处理完成</button>
         <button type="button" @click="toggleTheme">
           切换到{{ theme === 'light' ? '深色' : '浅色' }}主题
         </button>
@@ -771,7 +795,7 @@ function minimapNodeColor(node: WorkflowCanvasNode) {
   --node-divider: rgba(33, 43, 54, 0.08);
   --node-icon-surface: rgba(17, 24, 39, 0.06);
   --chip-muted-bg: rgba(91, 101, 124, 0.1);
-  --node-shadow: 0 24px 48px rgba(53, 67, 90, 0.12);
+  --node-shadow: 0 1px 4px rgba(33, 43, 54, 0.06);
   min-height: 100vh;
   display: grid;
   grid-template-columns: 320px 1fr;
@@ -798,7 +822,7 @@ function minimapNodeColor(node: WorkflowCanvasNode) {
   --node-divider: rgba(148, 163, 184, 0.12);
   --node-icon-surface: rgba(255, 255, 255, 0.05);
   --chip-muted-bg: rgba(148, 163, 184, 0.12);
-  --node-shadow: 0 24px 52px rgba(0, 0, 0, 0.34);
+  --node-shadow: 0 1px 6px rgba(0, 0, 0, 0.18);
   background:
     radial-gradient(circle at top left, rgba(255, 117, 58, 0.18), transparent 24%),
     radial-gradient(circle at right top, rgba(64, 174, 255, 0.16), transparent 22%),

@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { Handle, Position, type NodeProps } from '@vue-flow/core'
 import type { WorkflowNodeAttachments, WorkflowNodeData } from '../types'
 import NodeContentWidget from './NodeContentWidget.vue'
+import chatBadgeIconUrl from '../../../assets/ui/Chat3.svg'
 import {
   getWorkflowNodeIconAssetId,
   getWorkflowNodeIconAssetSrc,
@@ -43,6 +44,7 @@ const classes = computed(() => [
 
 const iconAssetSrc = computed(() => getWorkflowNodeIconAssetSrc(getWorkflowNodeIconAssetId(props.data.attachments)))
 const attachmentEntries = computed(() => createAttachmentEntries(props.data.attachments))
+const showMessageBadge = computed(() => props.data.messageBadge?.hasUnread === true)
 
 function handleDragOver(event: DragEvent) {
   if (!hasNodeAttachmentPayload(event)) {
@@ -133,6 +135,10 @@ function hashAttachmentKey(key: string) {
 
     <div class="node-topline">
       <span class="node-icon">
+        <span v-if="showMessageBadge" class="node-message-badge" aria-label="Unread backend message">
+          <img :src="chatBadgeIconUrl" alt="" class="node-message-badge-icon" />
+          <span class="node-message-badge-dot"></span>
+        </span>
         <img v-if="iconAssetSrc" :src="iconAssetSrc" :alt="data.title" class="node-icon-asset" />
         <span v-else>{{ data.icon }}</span>
       </span>
@@ -218,6 +224,7 @@ function hashAttachmentKey(key: string) {
 }
 
 .node-icon {
+  position: relative;
   width: 38px;
   height: 38px;
   display: inline-flex;
@@ -230,10 +237,54 @@ function hashAttachmentKey(key: string) {
   letter-spacing: 0.04em;
 }
 
+.node-message-badge {
+  position: absolute;
+  top: -19px;
+  left: -20px;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  animation: message-badge-pulse 1.4s ease-in-out infinite;
+  z-index: 1;
+}
+
+.node-message-badge-icon {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+  filter: brightness(0) invert(1);
+}
+
+.node-message-badge-dot {
+  position: absolute;
+  top: -2px;
+  right: -1px;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #ef4444;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.98);
+}
+
 .node-icon-asset {
   width: 22px;
   height: 22px;
   object-fit: contain;
+}
+
+@keyframes message-badge-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.94;
+  }
+
+  50% {
+    transform: scale(1.05);
+    opacity: 1;
+  }
 }
 
 .node-kind,

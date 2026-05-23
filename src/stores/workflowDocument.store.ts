@@ -122,6 +122,44 @@ export const useWorkflowDocumentStore = defineStore('workflow-document', () => {
     return false
   }
 
+  function markFirstTriggerNodeUnread() {
+    for (const node of nodes.value) {
+      if (node.type !== 'workflow' || node.data?.kind !== 'trigger' || !node.data) {
+        continue
+      }
+
+      node.data = {
+        ...node.data,
+        messageBadge: {
+          hasUnread: true,
+        },
+      }
+
+      return true
+    }
+
+    return false
+  }
+
+  function clearFirstTriggerNodeUnread() {
+    for (const node of nodes.value) {
+      if (node.type !== 'workflow' || node.data?.kind !== 'trigger' || !node.data) {
+        continue
+      }
+
+      node.data = {
+        ...node.data,
+        messageBadge: {
+          hasUnread: false,
+        },
+      }
+
+      return true
+    }
+
+    return false
+  }
+
   watch([theme, nodes, edges, viewport], () => {
     if (isHydrated.value) {
       persist()
@@ -144,5 +182,7 @@ export const useWorkflowDocumentStore = defineStore('workflow-document', () => {
     setViewport,
     upsertNodeContentWidget,
     applyNodeAttachment,
+    markFirstTriggerNodeUnread,
+    clearFirstTriggerNodeUnread,
   }
 })

@@ -24,6 +24,10 @@ export interface WorkflowNodeContentWidgetData {
   updatedAt: string
 }
 
+export interface WorkflowNodeMessageBadgeData {
+  hasUnread: boolean
+}
+
 export interface WorkflowNodeData {
   title: string
   subtitle: string
@@ -34,6 +38,7 @@ export interface WorkflowNodeData {
   hint?: string
   note?: string
   contentWidget?: WorkflowNodeContentWidgetData
+  messageBadge?: WorkflowNodeMessageBadgeData
 }
 
 export interface WorkflowEdgeData {
