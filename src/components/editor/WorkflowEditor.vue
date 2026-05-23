@@ -52,6 +52,8 @@ const noteSeed = ref(1)
 const importInput = ref<HTMLInputElement | null>(null)
 const documentMessage = ref('')
 const pendingPlacement = ref<'workflow' | 'sticky' | null>(null)
+const shapesOpen = ref(false)
+const iconsOpen = ref(false)
 const { clearNodeAttachmentDrag, startNodeAttachmentDrag } = useNodeAttachmentDrag()
 
 const nodeTypes = {
@@ -264,6 +266,10 @@ function handleAttachmentDragStart(
     startNodeAttachmentDrag(event, {
       kind: 'shape',
       optionId: payload.optionId,
+    }, {
+      label: payload.label,
+      description: payload.description,
+      shapeId: payload.optionId,
     })
   }
 
@@ -271,6 +277,10 @@ function handleAttachmentDragStart(
     startNodeAttachmentDrag(event, {
       kind: 'icon',
       optionId: payload.optionId,
+    }, {
+      label: payload.label,
+      description: payload.description,
+      iconSrc: payload.assetSrc,
     })
   }
 
@@ -279,6 +289,14 @@ function handleAttachmentDragStart(
 
 function handleAttachmentDragEnd() {
   clearNodeAttachmentDrag()
+}
+
+function toggleShapesOpen() {
+  shapesOpen.value = !shapesOpen.value
+}
+
+function toggleIconsOpen() {
+  iconsOpen.value = !iconsOpen.value
 }
 
 async function applyStoredViewport() {
@@ -481,9 +499,15 @@ function minimapNodeColor(node: WorkflowCanvasNode) {
           <span class="attachment-panel-copy">拖到节点上，直接替换形状或 icon</span>
         </div>
 
-        <div class="attachment-group">
-          <strong class="attachment-group-title">Shapes</strong>
-          <div class="attachment-grid">
+        <section class="attachment-group">
+          <button type="button" class="attachment-folder" @click="toggleShapesOpen">
+            <span class="attachment-folder-meta">
+              <span class="attachment-folder-caret" :class="{ open: shapesOpen }">▾</span>
+              <strong class="attachment-group-title">Shapes</strong>
+            </span>
+            <span class="attachment-folder-count">{{ workflowNodeShapeOptions.length }}</span>
+          </button>
+          <div v-if="shapesOpen" class="attachment-grid">
             <button
               v-for="shapeOption in workflowNodeShapeOptions"
               :key="shapeOption.optionId"
@@ -500,11 +524,17 @@ function minimapNodeColor(node: WorkflowCanvasNode) {
               </span>
             </button>
           </div>
-        </div>
+        </section>
 
-        <div class="attachment-group">
-          <strong class="attachment-group-title">Icons</strong>
-          <div class="attachment-grid">
+        <section class="attachment-group">
+          <button type="button" class="attachment-folder" @click="toggleIconsOpen">
+            <span class="attachment-folder-meta">
+              <span class="attachment-folder-caret" :class="{ open: iconsOpen }">▾</span>
+              <strong class="attachment-group-title">Icons</strong>
+            </span>
+            <span class="attachment-folder-count">{{ workflowNodeIconOptions.length }}</span>
+          </button>
+          <div v-if="iconsOpen" class="attachment-grid">
             <button
               v-for="iconOption in workflowNodeIconOptions"
               :key="iconOption.optionId"
@@ -523,7 +553,7 @@ function minimapNodeColor(node: WorkflowCanvasNode) {
               </span>
             </button>
           </div>
-        </div>
+        </section>
       </section>
 
       <section class="inspector-card">
@@ -753,6 +783,51 @@ button.primary {
   gap: 10px;
 }
 
+.attachment-folder {
+  height: auto;
+  min-height: 44px;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--panel-surface) 84%, transparent);
+}
+
+.attachment-folder-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.attachment-folder-caret {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  color: var(--text-muted);
+  transform: rotate(-90deg);
+  transition: transform 0.18s ease;
+}
+
+.attachment-folder-caret.open {
+  transform: rotate(0deg);
+}
+
+.attachment-folder-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: var(--chip-muted-bg);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+}
+
 .attachment-group-title {
   font-size: 12px;
   letter-spacing: 0.08em;
@@ -771,6 +846,7 @@ button.primary {
   padding: 12px;
   justify-content: flex-start;
   gap: 12px;
+  cursor: grab;
 }
 
 .attachment-card:active {
