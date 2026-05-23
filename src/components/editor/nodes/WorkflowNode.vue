@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { Handle, Position, type NodeProps } from '@vue-flow/core'
-import type { WorkflowNodeData } from '../types'
+import type { WorkflowNodeAttachments, WorkflowNodeData } from '../types'
 import NodeContentWidget from './NodeContentWidget.vue'
 import {
   getWorkflowNodeIconAssetId,
@@ -33,7 +33,7 @@ const statusLabel = computed(() => {
 const classes = computed(() => [
   'workflow-node',
   `kind-${props.data.kind}`,
-  `shape-${getWorkflowNodeShape(props.data.attachments)}`,
+  `shape-${getWorkflowNodeShape(props.data.attachments) ?? 'default'}`,
   `status-${props.data.status ?? 'default'}`,
   {
     selected: props.selected,
@@ -42,6 +42,7 @@ const classes = computed(() => [
 ])
 
 const iconAssetSrc = computed(() => getWorkflowNodeIconAssetSrc(getWorkflowNodeIconAssetId(props.data.attachments)))
+const attachmentEntries = computed(() => createAttachmentEntries(props.data.attachments))
 
 function handleDragOver(event: DragEvent) {
   if (!hasNodeAttachmentPayload(event)) {
@@ -84,6 +85,40 @@ function handleDrop(event: DragEvent) {
   workflowDocumentStore.applyNodeAttachment(props.id, payload)
   clearNodeAttachmentDrag()
 }
+
+function createAttachmentEntries(attachments?: WorkflowNodeAttachments) {
+  if (!attachments) {
+    return []
+  }
+
+  return Object.entries(attachments)
+    .filter((entry): entry is [string, string] => typeof entry[1] === 'string' && entry[1].length > 0)
+    .map(([key, value]) => {
+      const hue = hashAttachmentKey(key)
+
+      return {
+        key,
+        value,
+        label: key.slice(0, 1).toUpperCase(),
+        style: {
+          backgroundColor: `hsla(${hue}, 72%, 84%, 0.88)`,
+          borderColor: `hsla(${hue}, 52%, 56%, 0.3)`,
+          color: `hsl(${hue}, 34%, 22%)`,
+          boxShadow: `inset 0 1px 0 hsla(${hue}, 100%, 100%, 0.65)`,
+        },
+      }
+    })
+}
+
+function hashAttachmentKey(key: string) {
+  let hash = 0
+
+  for (const character of key) {
+    hash = (hash * 31 + character.charCodeAt(0)) % 360
+  }
+
+  return hash
+}
 </script>
 
 <template>
@@ -111,9 +146,20 @@ function handleDrop(event: DragEvent) {
       <span v-if="data.hint" class="node-hint">{{ data.hint }}</span>
     </div>
 
-    <div class="node-footer">
-      <span class="node-pill">Input</span>
-      <span class="node-pill">Output</span>
+    <div v-if="attachmentEntries.length" class="node-footer">
+      <span
+        v-for="attachment in attachmentEntries"
+        :key="attachment.key"
+        class="attachment-badge"
+        :style="attachment.style"
+        tabindex="0"
+      >
+        <span class="attachment-badge-label">{{ attachment.label }}</span>
+        <span class="attachment-tooltip">
+          <strong>{{ attachment.key }}</strong>
+          <span>{{ attachment.value }}</span>
+        </span>
+      </span>
     </div>
 
     <NodeContentWidget v-if="data.contentWidget" :content="data.contentWidget.content" />
@@ -164,8 +210,7 @@ function handleDrop(event: DragEvent) {
   box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 22%, transparent), var(--node-shadow);
 }
 
-.node-topline,
-.node-footer {
+.node-topline {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -192,8 +237,7 @@ function handleDrop(event: DragEvent) {
 }
 
 .node-kind,
-.node-status,
-.node-pill {
+.node-status {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -237,13 +281,93 @@ function handleDrop(event: DragEvent) {
 }
 
 .node-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
   padding-top: 8px;
   border-top: 1px solid var(--node-divider);
 }
 
-.node-pill {
-  background: var(--chip-muted-bg);
-  color: var(--text-secondary);
+.attachment-badge {
+  position: relative;
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  cursor: default;
+  outline: none;
+  transition:
+    transform 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.attachment-badge:hover,
+.attachment-badge:focus-visible {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 20px rgba(15, 23, 42, 0.12);
+}
+
+.attachment-badge-label {
+  line-height: 1;
+}
+
+.attachment-tooltip {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 10px);
+  transform: translateX(-50%) translateY(6px);
+  min-width: max-content;
+  max-width: 180px;
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(17, 24, 39, 0.94);
+  box-shadow: 0 16px 32px rgba(15, 23, 42, 0.22);
+  color: #f8fafc;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s ease;
+  z-index: 2;
+}
+
+.attachment-tooltip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  width: 10px;
+  height: 10px;
+  background: rgba(17, 24, 39, 0.94);
+  transform: translateX(-50%) rotate(45deg);
+}
+
+.attachment-tooltip strong {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.66);
+}
+
+.attachment-tooltip span {
+  font-size: 12px;
+  line-height: 1.4;
+  color: #f8fafc;
+  white-space: nowrap;
+}
+
+.attachment-badge:hover .attachment-tooltip,
+.attachment-badge:focus-visible .attachment-tooltip {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
 }
 
 .kind-trigger .node-icon {
