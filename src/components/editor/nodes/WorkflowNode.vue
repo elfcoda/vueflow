@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { Handle, Position, type NodeProps } from '@vue-flow/core'
 import type { WorkflowNodeAttachments, WorkflowNodeData } from '../types'
 import NodeContentWidget from './NodeContentWidget.vue'
@@ -45,6 +45,16 @@ const classes = computed(() => [
 const iconAssetSrc = computed(() => getWorkflowNodeIconAssetSrc(getWorkflowNodeIconAssetId(props.data.attachments)))
 const attachmentEntries = computed(() => createAttachmentEntries(props.data.attachments))
 const showMessageBadge = computed(() => props.data.messageBadge?.hasUnread === true)
+const messageBadgeBurstBubbles = ref<Array<{ id: number; style: Record<string, string> }>>([])
+const isMessageBadgeBursting = ref(false)
+
+let messageBadgeBurstTimer: number | undefined
+
+watch(showMessageBadge, (hasUnread, hadUnread) => {
+  if (!hasUnread && hadUnread) {
+    triggerMessageBadgeBurst()
+  }
+})
 
 function handleDragOver(event: DragEvent) {
   if (!hasNodeAttachmentPayload(event)) {
@@ -121,6 +131,38 @@ function hashAttachmentKey(key: string) {
 
   return hash
 }
+
+function triggerMessageBadgeBurst() {
+  if (messageBadgeBurstTimer !== undefined) {
+    window.clearTimeout(messageBadgeBurstTimer)
+  }
+
+  messageBadgeBurstBubbles.value = Array.from({ length: 8 }, (_, index) => {
+    const angle = -110 + index * 28
+    const distance = 16 + (index % 3) * 8
+    const size = 6 + (index % 3) * 3
+    const duration = 420 + index * 28
+    const delay = (index % 2) * 24
+
+    return {
+      id: Date.now() + index,
+      style: {
+        '--bubble-angle': `${angle}deg`,
+        '--bubble-distance': `${distance}px`,
+        '--bubble-size': `${size}px`,
+        '--bubble-duration': `${duration}ms`,
+        '--bubble-delay': `${delay}ms`,
+      },
+    }
+  })
+  isMessageBadgeBursting.value = true
+
+  messageBadgeBurstTimer = window.setTimeout(() => {
+    isMessageBadgeBursting.value = false
+    messageBadgeBurstBubbles.value = []
+    messageBadgeBurstTimer = undefined
+  }, 760)
+}
 </script>
 
 <template>
@@ -135,9 +177,22 @@ function hashAttachmentKey(key: string) {
 
     <div class="node-topline">
       <span class="node-icon">
-        <span v-if="showMessageBadge" class="node-message-badge" aria-label="Unread backend message">
-          <img :src="chatBadgeIconUrl" alt="" class="node-message-badge-icon" />
-          <span class="node-message-badge-dot"></span>
+        <span
+          v-if="showMessageBadge || isMessageBadgeBursting"
+          class="node-message-badge"
+          :class="{ 'is-bursting': isMessageBadgeBursting }"
+          aria-label="Unread backend message"
+        >
+          <img v-if="showMessageBadge" :src="chatBadgeIconUrl" alt="" class="node-message-badge-icon" />
+          <span v-if="showMessageBadge" class="node-message-badge-dot"></span>
+          <span class="node-message-badge-bubbles" aria-hidden="true">
+            <span
+              v-for="bubble in messageBadgeBurstBubbles"
+              :key="bubble.id"
+              class="node-message-badge-bubble"
+              :style="bubble.style"
+            ></span>
+          </span>
         </span>
         <img v-if="iconAssetSrc" :src="iconAssetSrc" :alt="data.title" class="node-icon-asset" />
         <span v-else>{{ data.icon }}</span>
@@ -248,6 +303,11 @@ function hashAttachmentKey(key: string) {
   justify-content: center;
   animation: message-badge-pulse 1.4s ease-in-out infinite;
   z-index: 1;
+  pointer-events: none;
+}
+
+.node-message-badge.is-bursting {
+  animation: none;
 }
 
 .node-message-badge-icon {
@@ -268,6 +328,28 @@ function hashAttachmentKey(key: string) {
   box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.98);
 }
 
+.node-message-badge-bubbles {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.node-message-badge-bubble {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: var(--bubble-size);
+  height: var(--bubble-size);
+  margin-top: calc(var(--bubble-size) / -2);
+  margin-left: calc(var(--bubble-size) / -2);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 0 10px rgba(255, 255, 255, 0.32);
+  transform: rotate(var(--bubble-angle)) translateY(0) scale(0.7);
+  opacity: 0;
+  animation: message-badge-bubble-burst var(--bubble-duration) ease-out var(--bubble-delay) forwards;
+}
+
 .node-icon-asset {
   width: 22px;
   height: 22px;
@@ -284,6 +366,22 @@ function hashAttachmentKey(key: string) {
   50% {
     transform: scale(1.05);
     opacity: 1;
+  }
+}
+
+@keyframes message-badge-bubble-burst {
+  0% {
+    transform: rotate(var(--bubble-angle)) translateY(0) scale(0.5);
+    opacity: 0;
+  }
+
+  12% {
+    opacity: 1;
+  }
+
+  100% {
+    transform: rotate(var(--bubble-angle)) translateY(calc(var(--bubble-distance) * -1)) scale(1.15);
+    opacity: 0;
   }
 }
 
