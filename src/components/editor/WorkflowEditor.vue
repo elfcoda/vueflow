@@ -22,7 +22,9 @@ import {
   type WorkflowDocumentData,
 } from './document'
 import {
+  getWorkflowNodeIconAssetId,
   type WorkflowNodeIconOption,
+  getWorkflowNodeShape,
   type WorkflowNodeShapeOption,
   workflowNodeIconOptions,
   workflowNodeShapeOptions,
@@ -564,8 +566,8 @@ function minimapNodeColor(node: WorkflowCanvasNode) {
           {{ selectedNodeData.hint ?? '拖拽节点、创建连线，或用左侧按钮快速扩展流程。' }}
         </p>
         <p>
-          Shape: {{ selectedNodeData.shape ?? 'default' }} · Icon:
-          {{ selectedNodeData.iconAssetId ?? selectedNodeData.icon }}
+          Shape: {{ getWorkflowNodeShape(selectedNodeData.attachments) }} · Icon:
+          {{ getWorkflowNodeIconAssetId(selectedNodeData.attachments) ?? selectedNodeData.icon }}
         </p>
       </section>
     </aside>

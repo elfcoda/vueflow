@@ -1,5 +1,6 @@
-import type {
+﻿import type {
   WorkflowNodeAttachmentPayload,
+  WorkflowNodeAttachments,
   WorkflowNodeData,
   WorkflowNodeIconAssetId,
   WorkflowNodeShape,
@@ -110,6 +111,14 @@ export function getWorkflowNodeIconAssetSrc(iconAssetId?: WorkflowNodeIconAssetI
   return iconAssetUrlMap[iconAssetId]
 }
 
+export function getWorkflowNodeShape(attachments?: WorkflowNodeAttachments) {
+  return attachments?.shape
+}
+
+export function getWorkflowNodeIconAssetId(attachments?: WorkflowNodeAttachments) {
+  return attachments?.icon
+}
+
 export function applyWorkflowNodeAttachmentToData(
   data: WorkflowNodeData,
   payload: WorkflowNodeAttachmentPayload,
@@ -122,7 +131,6 @@ export function applyWorkflowNodeAttachmentToData(
   }
 
   if (payload.kind === 'shape') {
-    nextData.shape = payload.optionId
     nextData.attachments = {
       ...nextData.attachments,
       shape: payload.optionId,
@@ -130,7 +138,6 @@ export function applyWorkflowNodeAttachmentToData(
   }
 
   if (payload.kind === 'icon') {
-    nextData.iconAssetId = payload.optionId
     nextData.attachments = {
       ...nextData.attachments,
       icon: payload.optionId,

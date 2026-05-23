@@ -29,8 +29,6 @@ export interface WorkflowNodeData {
   subtitle: string
   icon: string
   kind: WorkflowNodeKind
-  shape?: WorkflowNodeShape
-  iconAssetId?: WorkflowNodeIconAssetId
   attachments?: WorkflowNodeAttachments
   status?: WorkflowNodeStatus
   hint?: string

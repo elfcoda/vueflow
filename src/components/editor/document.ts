@@ -29,8 +29,6 @@ export function createDefaultWorkflowDocument(): WorkflowDocumentData {
           subtitle: '监听外部事件并启动流程',
           icon: 'WB',
           kind: 'trigger',
-          shape: 'trigger',
-          iconAssetId: 'webhook-icon',
           attachments: {
             shape: 'trigger',
             icon: 'webhook-icon',
@@ -50,8 +48,6 @@ export function createDefaultWorkflowDocument(): WorkflowDocumentData {
           subtitle: '清洗请求体并映射字段',
           icon: 'FX',
           kind: 'action',
-          shape: 'default',
-          iconAssetId: 'open-ai',
           attachments: {
             shape: 'default',
             icon: 'open-ai',
@@ -71,8 +67,6 @@ export function createDefaultWorkflowDocument(): WorkflowDocumentData {
           subtitle: '将结果写入外部系统',
           icon: 'DB',
           kind: 'output',
-          shape: 'pill',
-          iconAssetId: 'n8n-logo',
           attachments: {
             shape: 'pill',
             icon: 'n8n-logo',

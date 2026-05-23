@@ -3,7 +3,11 @@ import { computed, ref } from 'vue'
 import { Handle, Position, type NodeProps } from '@vue-flow/core'
 import type { WorkflowNodeData } from '../types'
 import NodeContentWidget from './NodeContentWidget.vue'
-import { getWorkflowNodeIconAssetSrc } from '../nodeAttachmentCatalog'
+import {
+  getWorkflowNodeIconAssetId,
+  getWorkflowNodeIconAssetSrc,
+  getWorkflowNodeShape,
+} from '../nodeAttachmentCatalog'
 import { useNodeAttachmentDrag } from '../useNodeAttachmentDrag'
 import { useWorkflowDocumentStore } from '../../../stores/workflowDocument.store'
 
@@ -29,7 +33,7 @@ const statusLabel = computed(() => {
 const classes = computed(() => [
   'workflow-node',
   `kind-${props.data.kind}`,
-  `shape-${props.data.shape ?? 'default'}`,
+  `shape-${getWorkflowNodeShape(props.data.attachments)}`,
   `status-${props.data.status ?? 'default'}`,
   {
     selected: props.selected,
@@ -37,7 +41,7 @@ const classes = computed(() => [
   },
 ])
 
-const iconAssetSrc = computed(() => getWorkflowNodeIconAssetSrc(props.data.iconAssetId))
+const iconAssetSrc = computed(() => getWorkflowNodeIconAssetSrc(getWorkflowNodeIconAssetId(props.data.attachments)))
 
 function handleDragOver(event: DragEvent) {
   if (!hasNodeAttachmentPayload(event)) {
