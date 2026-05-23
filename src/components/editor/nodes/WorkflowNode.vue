@@ -1,10 +1,17 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { Handle, Position, type NodeProps } from '@vue-flow/core'
 import type { WorkflowNodeData } from '../types'
 import NodeContentWidget from './NodeContentWidget.vue'
+import { getWorkflowNodeIconAssetSrc } from '../nodeAttachmentCatalog'
+import { useNodeAttachmentDrag } from '../useNodeAttachmentDrag'
+import { useWorkflowDocumentStore } from '../../../stores/workflowDocument.store'
 
 const props = defineProps<NodeProps<WorkflowNodeData>>()
+const workflowDocumentStore = useWorkflowDocumentStore()
+const { clearNodeAttachmentDrag, getNodeAttachmentPayload, hasNodeAttachmentPayload } =
+  useNodeAttachmentDrag()
+const isAttachmentTarget = ref(false)
 
 const statusLabel = computed(() => {
   switch (props.data.status) {
@@ -22,17 +29,74 @@ const statusLabel = computed(() => {
 const classes = computed(() => [
   'workflow-node',
   `kind-${props.data.kind}`,
+  `shape-${props.data.shape ?? 'default'}`,
   `status-${props.data.status ?? 'default'}`,
-  { selected: props.selected },
+  {
+    selected: props.selected,
+    'attachment-target': isAttachmentTarget.value,
+  },
 ])
+
+const iconAssetSrc = computed(() => getWorkflowNodeIconAssetSrc(props.data.iconAssetId))
+
+function handleDragOver(event: DragEvent) {
+  if (!hasNodeAttachmentPayload(event)) {
+    return
+  }
+
+  event.preventDefault()
+  event.stopPropagation()
+  if (event.dataTransfer) {
+    event.dataTransfer.dropEffect = 'copy'
+  }
+  isAttachmentTarget.value = true
+}
+
+function handleDragEnter(event: DragEvent) {
+  if (!hasNodeAttachmentPayload(event)) {
+    return
+  }
+
+  event.preventDefault()
+  event.stopPropagation()
+  isAttachmentTarget.value = true
+}
+
+function handleDragLeave() {
+  isAttachmentTarget.value = false
+}
+
+function handleDrop(event: DragEvent) {
+  const payload = getNodeAttachmentPayload(event)
+
+  isAttachmentTarget.value = false
+
+  if (!payload) {
+    return
+  }
+
+  event.preventDefault()
+  event.stopPropagation()
+  workflowDocumentStore.applyNodeAttachment(props.id, payload)
+  clearNodeAttachmentDrag()
+}
 </script>
 
 <template>
-  <div :class="classes">
+  <div
+    :class="classes"
+    @dragenter="handleDragEnter"
+    @dragover="handleDragOver"
+    @dragleave="handleDragLeave"
+    @drop="handleDrop"
+  >
     <Handle type="target" :position="Position.Left" class="port port-target" />
 
     <div class="node-topline">
-      <span class="node-icon">{{ data.icon }}</span>
+      <span class="node-icon">
+        <img v-if="iconAssetSrc" :src="iconAssetSrc" :alt="data.title" class="node-icon-asset" />
+        <span v-else>{{ data.icon }}</span>
+      </span>
       <span class="node-kind">{{ data.kind }}</span>
       <span class="node-status">{{ statusLabel }}</span>
     </div>
@@ -59,7 +123,6 @@ const classes = computed(() => [
   width: 260px;
   min-height: 118px;
   padding: 14px;
-  border-radius: 20px;
   border: 1px solid var(--node-border);
   background: var(--node-surface);
   box-shadow: var(--node-shadow);
@@ -70,10 +133,31 @@ const classes = computed(() => [
     box-shadow 0.2s ease;
 }
 
+.shape-default {
+  border-radius: 20px;
+}
+
+.shape-trigger {
+  border-radius: 40px 20px 20px 40px;
+}
+
+.shape-pill {
+  border-radius: 999px;
+}
+
+.shape-bevel {
+  border-radius: 32px 10px 32px 10px;
+}
+
 .workflow-node.selected {
   border-color: var(--accent);
   box-shadow: 0 0 0 4px var(--accent-ring), var(--node-shadow);
   transform: translateY(-1px);
+}
+
+.workflow-node.attachment-target {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 22%, transparent), var(--node-shadow);
 }
 
 .node-topline,
@@ -95,6 +179,12 @@ const classes = computed(() => [
   font-size: 14px;
   font-weight: 700;
   letter-spacing: 0.04em;
+}
+
+.node-icon-asset {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
 }
 
 .node-kind,

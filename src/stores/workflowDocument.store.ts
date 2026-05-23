@@ -10,8 +10,10 @@ import {
   type WorkflowDocumentData,
   type WorkflowTheme,
 } from '../components/editor/document'
+import type { WorkflowNodeAttachmentPayload } from '../components/editor/types'
 import { createWorkflowGraphExport, type WorkflowGraphExportData } from '../services/workflowGraph'
 import { applyWorkflowNodeContentPush } from '../services/workflowGraphPush'
+import { applyWorkflowNodeAttachmentToData } from '../components/editor/nodeAttachmentCatalog'
 
 export const useWorkflowDocumentStore = defineStore('workflow-document', () => {
   const initialDocument = createDefaultWorkflowDocument()
@@ -107,6 +109,19 @@ export const useWorkflowDocumentStore = defineStore('workflow-document', () => {
     return applyWorkflowNodeContentPush(nodes.value, { nodeId, content })
   }
 
+  function applyNodeAttachment(nodeId: string, payload: WorkflowNodeAttachmentPayload) {
+    for (const node of nodes.value) {
+      if (node.id !== nodeId || node.type !== 'workflow' || !node.data) {
+        continue
+      }
+
+      node.data = applyWorkflowNodeAttachmentToData(node.data, payload)
+      return true
+    }
+
+    return false
+  }
+
   watch([theme, nodes, edges, viewport], () => {
     if (isHydrated.value) {
       persist()
@@ -128,5 +143,6 @@ export const useWorkflowDocumentStore = defineStore('workflow-document', () => {
     setTheme,
     setViewport,
     upsertNodeContentWidget,
+    applyNodeAttachment,
   }
 })

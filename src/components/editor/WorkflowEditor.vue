@@ -21,6 +21,13 @@ import {
   type WorkflowCanvasNode,
   type WorkflowDocumentData,
 } from './document'
+import {
+  type WorkflowNodeIconOption,
+  type WorkflowNodeShapeOption,
+  workflowNodeIconOptions,
+  workflowNodeShapeOptions,
+} from './nodeAttachmentCatalog'
+import { useNodeAttachmentDrag } from './useNodeAttachmentDrag'
 import type { WorkflowNodeData } from './types'
 import { sendWorkflowGraphToBackend } from '../../api/workflowGraph'
 import { useWorkflowDocumentStore } from '../../stores/workflowDocument.store'
@@ -45,6 +52,7 @@ const noteSeed = ref(1)
 const importInput = ref<HTMLInputElement | null>(null)
 const documentMessage = ref('')
 const pendingPlacement = ref<'workflow' | 'sticky' | null>(null)
+const { clearNodeAttachmentDrag, startNodeAttachmentDrag } = useNodeAttachmentDrag()
 
 const nodeTypes = {
   workflow: WorkflowNode,
@@ -248,6 +256,31 @@ function setDocumentMessage(message: string) {
   }, 2400)
 }
 
+function handleAttachmentDragStart(
+  event: DragEvent,
+  payload: WorkflowNodeShapeOption | WorkflowNodeIconOption,
+) {
+  if (payload.kind === 'shape') {
+    startNodeAttachmentDrag(event, {
+      kind: 'shape',
+      optionId: payload.optionId,
+    })
+  }
+
+  if (payload.kind === 'icon') {
+    startNodeAttachmentDrag(event, {
+      kind: 'icon',
+      optionId: payload.optionId,
+    })
+  }
+
+  setDocumentMessage('拖动到任意工作流节点上即可附加这个属性')
+}
+
+function handleAttachmentDragEnd() {
+  clearNodeAttachmentDrag()
+}
+
 async function applyStoredViewport() {
   await applyViewport(viewport.value)
 }
@@ -442,12 +475,67 @@ function minimapNodeColor(node: WorkflowCanvasNode) {
         </div>
       </dl>
 
+      <section class="attachment-panel">
+        <div class="attachment-panel-header">
+          <p class="inspector-eyebrow">Drag Attachments</p>
+          <span class="attachment-panel-copy">拖到节点上，直接替换形状或 icon</span>
+        </div>
+
+        <div class="attachment-group">
+          <strong class="attachment-group-title">Shapes</strong>
+          <div class="attachment-grid">
+            <button
+              v-for="shapeOption in workflowNodeShapeOptions"
+              :key="shapeOption.optionId"
+              type="button"
+              class="attachment-card"
+              draggable="true"
+              @dragstart="handleAttachmentDragStart($event, shapeOption)"
+              @dragend="handleAttachmentDragEnd"
+            >
+              <span class="attachment-preview" :class="shapeOption.previewClass"></span>
+              <span class="attachment-meta">
+                <strong>{{ shapeOption.label }}</strong>
+                <span>{{ shapeOption.description }}</span>
+              </span>
+            </button>
+          </div>
+        </div>
+
+        <div class="attachment-group">
+          <strong class="attachment-group-title">Icons</strong>
+          <div class="attachment-grid">
+            <button
+              v-for="iconOption in workflowNodeIconOptions"
+              :key="iconOption.optionId"
+              type="button"
+              class="attachment-card"
+              draggable="true"
+              @dragstart="handleAttachmentDragStart($event, iconOption)"
+              @dragend="handleAttachmentDragEnd"
+            >
+              <span class="attachment-icon-shell">
+                <img :src="iconOption.assetSrc" :alt="iconOption.label" class="attachment-icon" />
+              </span>
+              <span class="attachment-meta">
+                <strong>{{ iconOption.label }}</strong>
+                <span>{{ iconOption.description }}</span>
+              </span>
+            </button>
+          </div>
+        </div>
+      </section>
+
       <section class="inspector-card">
         <p class="inspector-eyebrow">Selected node</p>
         <strong>{{ selectedNodeData.title }}</strong>
         <span>{{ selectedNodeData.subtitle }}</span>
         <p>
           {{ selectedNodeData.hint ?? '拖拽节点、创建连线，或用左侧按钮快速扩展流程。' }}
+        </p>
+        <p>
+          Shape: {{ selectedNodeData.shape ?? 'default' }} · Icon:
+          {{ selectedNodeData.iconAssetId ?? selectedNodeData.icon }}
         </p>
       </section>
     </aside>
@@ -563,11 +651,28 @@ function minimapNodeColor(node: WorkflowCanvasNode) {
   display: flex;
   flex-direction: column;
   gap: 24px;
+  max-height: 100vh;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 28px;
   border-right: 1px solid var(--panel-border);
   background: var(--sidebar-surface);
   backdrop-filter: blur(18px);
   color: var(--text-primary);
+}
+
+.editor-sidebar::-webkit-scrollbar {
+  width: 10px;
+}
+
+.editor-sidebar::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(127, 139, 153, 0.35);
+}
+
+.editor-sidebar::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .sidebar-eyebrow,
@@ -620,11 +725,115 @@ button.primary {
 }
 
 .sidebar-stats div,
+.attachment-panel,
 .inspector-card {
   padding: 16px;
   border-radius: 18px;
   border: 1px solid var(--panel-border);
   background: var(--panel-surface);
+}
+
+.attachment-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.attachment-panel-header {
+  display: grid;
+  gap: 6px;
+}
+
+.attachment-panel-copy {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.attachment-group {
+  display: grid;
+  gap: 10px;
+}
+
+.attachment-group-title {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.attachment-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.attachment-card {
+  height: auto;
+  min-height: 74px;
+  padding: 12px;
+  justify-content: flex-start;
+  gap: 12px;
+}
+
+.attachment-card:active {
+  cursor: grabbing;
+}
+
+.attachment-preview,
+.attachment-icon-shell {
+  width: 46px;
+  height: 46px;
+  flex: 0 0 auto;
+  border: 1px solid var(--panel-border);
+  background: color-mix(in srgb, var(--panel-surface) 72%, transparent);
+}
+
+.attachment-preview {
+  display: inline-flex;
+}
+
+.preview-default {
+  border-radius: 12px;
+}
+
+.preview-trigger {
+  border-radius: 22px 12px 12px 22px;
+}
+
+.preview-pill {
+  border-radius: 999px;
+}
+
+.preview-bevel {
+  border-radius: 18px 8px 18px 8px;
+}
+
+.attachment-icon-shell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 14px;
+}
+
+.attachment-icon {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+}
+
+.attachment-meta {
+  display: grid;
+  gap: 4px;
+  text-align: left;
+}
+
+.attachment-meta strong {
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+.attachment-meta span {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
 }
 
 .sidebar-stats dt {
@@ -738,6 +947,7 @@ button.primary {
   }
 
   .editor-sidebar {
+    max-height: none;
     border-right: 0;
     border-bottom: 1px solid var(--panel-border);
   }
