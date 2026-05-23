@@ -56,6 +56,9 @@ const documentMessage = ref('')
 const pendingPlacement = ref<'workflow' | 'sticky' | null>(null)
 const shapesOpen = ref(false)
 const iconsOpen = ref(false)
+const inspirationNodeId = ref('')
+const inspirationPrompt = ref('')
+const inspirationResult = ref('')
 const { clearNodeAttachmentDrag, startNodeAttachmentDrag } = useNodeAttachmentDrag()
 
 const nodeTypes = {
@@ -106,6 +109,60 @@ const selectedNodeData = computed<WorkflowNodeData>(() => {
 
   const firstNode = workflowNodes.value[0]
   return firstNode?.data ?? fallbackNodeData
+})
+
+const actionNodes = computed<WorkflowCanvasNode[]>(() => {
+  const result: WorkflowCanvasNode[] = []
+
+  for (const node of workflowNodes.value) {
+    if (node.data?.kind === 'action') {
+      result.push(node)
+    }
+  }
+
+  return result
+})
+
+const selectedActionNodeId = computed(() => {
+  if (!selectedNodeId.value) {
+    return ''
+  }
+
+  for (const node of actionNodes.value) {
+    if (node.id === selectedNodeId.value) {
+      return node.id
+    }
+  }
+
+  return ''
+})
+
+const activeInspirationNodeId = computed(() => {
+  if (inspirationNodeId.value) {
+    for (const node of actionNodes.value) {
+      if (node.id === inspirationNodeId.value) {
+        return node.id
+      }
+    }
+  }
+
+  if (selectedActionNodeId.value) {
+    return selectedActionNodeId.value
+  }
+
+  return actionNodes.value[0]?.id ?? ''
+})
+
+const activeInspirationNode = computed(() => {
+  const targetNodeId = activeInspirationNodeId.value
+
+  for (const node of actionNodes.value) {
+    if (node.id === targetNodeId) {
+      return node
+    }
+  }
+
+  return undefined
 })
 
 const stats = computed(() => {
@@ -301,6 +358,22 @@ function toggleIconsOpen() {
   iconsOpen.value = !iconsOpen.value
 }
 
+function handleInspirationNodeChange(event: Event) {
+  const nextValue = (event.target as HTMLSelectElement | null)?.value ?? ''
+  inspirationNodeId.value = nextValue
+}
+
+function handleInspirationBurst() {
+  if (!activeInspirationNodeId.value) {
+    inspirationResult.value = ''
+    setDocumentMessage('当前没有可用的 action 节点')
+    return
+  }
+
+  inspirationResult.value = 'generated from ai agent'
+  setDocumentMessage('灵感工作台已生成输出')
+}
+
 async function applyStoredViewport() {
   await applyViewport(viewport.value)
 }
@@ -494,6 +567,59 @@ function minimapNodeColor(node: WorkflowCanvasNode) {
           <dd>{{ stats.notes }}</dd>
         </div>
       </dl>
+
+      <section class="inspiration-workbench">
+        <div class="inspiration-workbench-header">
+          <p class="inspector-eyebrow">Inspiration Lab</p>
+          <span class="inspiration-workbench-copy">为 action 节点快速触发灵感输出</span>
+        </div>
+
+        <label class="inspiration-field">
+          <span>Action node</span>
+          <select
+            class="inspiration-select"
+            :value="activeInspirationNodeId"
+            :disabled="!actionNodes.length"
+            @change="handleInspirationNodeChange"
+          >
+            <option v-if="!actionNodes.length" value="">No action nodes</option>
+            <option v-for="node in actionNodes" :key="node.id" :value="node.id">
+              {{ node.data?.title ?? node.id }}
+            </option>
+          </select>
+        </label>
+
+        <label class="inspiration-field">
+          <span>Input</span>
+          <textarea
+            v-model="inspirationPrompt"
+            class="inspiration-textarea"
+            rows="4"
+            :disabled="!actionNodes.length"
+            placeholder="Describe the spark you want for this action node..."
+          />
+        </label>
+
+        <button
+          type="button"
+          class="inspiration-button"
+          :disabled="!actionNodes.length"
+          @click="handleInspirationBurst"
+        >
+          SPARK
+        </button>
+
+        <label class="inspiration-field">
+          <span>Output</span>
+          <textarea
+            :value="inspirationResult"
+            class="inspiration-textarea inspiration-output"
+            rows="3"
+            readonly
+            :placeholder="activeInspirationNode ? `Ready for ${activeInspirationNode.data?.title}` : 'No action nodes available'"
+          />
+        </label>
+      </section>
 
       <section class="attachment-panel">
         <div class="attachment-panel-header">
@@ -757,12 +883,82 @@ button.primary {
 }
 
 .sidebar-stats div,
+.inspiration-workbench,
 .attachment-panel,
 .inspector-card {
   padding: 16px;
   border-radius: 18px;
   border: 1px solid var(--panel-border);
   background: var(--panel-surface);
+}
+
+.inspiration-workbench {
+  display: grid;
+  gap: 14px;
+}
+
+.inspiration-workbench-header {
+  display: grid;
+  gap: 6px;
+}
+
+.inspiration-workbench-copy {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.inspiration-field {
+  display: grid;
+  gap: 8px;
+}
+
+.inspiration-field span {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.inspiration-select,
+.inspiration-textarea {
+  width: 100%;
+  border-radius: 14px;
+  border: 1px solid var(--panel-border);
+  background: color-mix(in srgb, var(--panel-surface) 88%, transparent);
+  color: var(--text-primary);
+  padding: 12px 14px;
+  font: inherit;
+}
+
+.inspiration-select {
+  height: 44px;
+}
+
+.inspiration-textarea {
+  min-height: 96px;
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.inspiration-output {
+  min-height: 88px;
+}
+
+.inspiration-select:disabled,
+.inspiration-textarea:disabled,
+.inspiration-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.inspiration-button {
+  height: 44px;
+  border-color: transparent;
+  background: linear-gradient(135deg, #ff8657 0%, #ff5a36 100%);
+  color: #fff;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
 }
 
 .attachment-panel {
