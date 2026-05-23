@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import {
   BaseEdge,
   EdgeLabelRenderer,
@@ -13,6 +13,7 @@ import type { WorkflowEdgeData } from '../types'
 const props = defineProps<EdgeProps<WorkflowEdgeData>>()
 
 const { removeEdges } = useVueFlow()
+const hovered = ref(false)
 
 const edgePath = computed(() =>
   getBezierPath({
@@ -34,11 +35,26 @@ const isDataEdge = computed(() => props.data?.kind === 'data')
 
 const edgeClass = computed(() => [
   'workflow-edge',
-  { selected: props.selected, data: isDataEdge.value },
+  { selected: props.selected, data: isDataEdge.value, hovered: hovered.value },
+])
+
+const labelClass = computed(() => [
+  'edge-label',
+  'nopan',
+  'nodrag',
+  { selected: props.selected, hovered: hovered.value, data: isDataEdge.value },
 ])
 
 function removeEdge() {
   removeEdges(props.id)
+}
+
+function handleMouseEnter() {
+  hovered.value = true
+}
+
+function handleMouseLeave() {
+  hovered.value = false
 }
 </script>
 
@@ -49,10 +65,18 @@ function removeEdge() {
     :class="edgeClass"
     :style="{ strokeDasharray: isDataEdge ? '6 6' : 'none' }"
     :marker-end="markerEnd ?? MarkerType.ArrowClosed"
+    :interaction-width="40"
+    @mouseenter="handleMouseEnter"
+    @mouseleave="handleMouseLeave"
   />
 
   <EdgeLabelRenderer>
-    <div class="edge-label nopan nodrag" :style="labelStyle">
+    <div
+      :class="labelClass"
+      :style="labelStyle"
+      @mouseenter="handleMouseEnter"
+      @mouseleave="handleMouseLeave"
+    >
       <span class="edge-badge">{{ data?.label ?? 'Main' }}</span>
       <button v-if="selected" type="button" class="edge-remove" @click="removeEdge">
         ×
@@ -63,8 +87,13 @@ function removeEdge() {
 
 <style scoped>
 .workflow-edge {
-  stroke: var(--edge-color);
-  stroke-width: 2.5;
+  stroke: color-mix(in srgb, var(--edge-color) 82%, transparent);
+  stroke-width: 2;
+  stroke-linecap: square;
+  transition:
+    stroke 0.18s ease,
+    stroke-width 0.18s ease,
+    opacity 0.18s ease;
 }
 
 .workflow-edge.selected {
@@ -72,8 +101,13 @@ function removeEdge() {
   stroke-width: 3;
 }
 
+.workflow-edge.hovered {
+  stroke: color-mix(in srgb, var(--edge-color) 92%, white 8%);
+}
+
 .workflow-edge.data {
   stroke: var(--edge-data-color);
+  opacity: 0.92;
 }
 
 .edge-label {
@@ -81,27 +115,49 @@ function removeEdge() {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  transform: translateY(-8px);
 }
 
 .edge-badge,
 .edge-remove {
-  border-radius: 999px;
   border: 1px solid var(--panel-border);
-  background: var(--panel-surface);
   color: var(--text-secondary);
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+  transition:
+    border-color 0.18s ease,
+    background-color 0.18s ease,
+    color 0.18s ease;
 }
 
 .edge-badge {
-  padding: 4px 10px;
-  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel-surface) 88%, transparent);
+  font-size: 10px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+  line-height: 1.4;
 }
 
 .edge-remove {
   width: 24px;
   height: 24px;
+  border-radius: 999px;
+  background: var(--panel-surface);
   cursor: pointer;
+}
+
+.edge-label.hovered .edge-badge,
+.edge-label.selected .edge-badge {
+  border-color: color-mix(in srgb, var(--accent) 34%, var(--panel-border));
+  color: var(--text-primary);
+}
+
+.edge-label.data .edge-badge {
+  color: color-mix(in srgb, var(--edge-data-color) 76%, var(--text-secondary));
+}
+
+.edge-label.selected .edge-remove {
+  border-color: color-mix(in srgb, var(--accent) 34%, var(--panel-border));
+  color: var(--accent);
 }
 </style>
