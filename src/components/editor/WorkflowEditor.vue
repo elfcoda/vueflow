@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import {
   MarkerType,
@@ -43,6 +43,46 @@ const fallbackNodeData: WorkflowNodeData = {
   hint: '当前没有选中节点',
 }
 
+type InspectorTabId = 'overview' | 'subagent'
+type SubagentMode = 'analyze' | 'implement' | 'refactor' | 'debug'
+type SubagentOutput = 'patch' | 'summary' | 'plan'
+type SubagentConstraint = 'preserve-api' | 'limit-scope' | 'run-checks' | 'no-deps'
+
+interface NodeSubagentDraft {
+  objective: string
+  scopePaths: string
+  entryHints: string
+  mode: SubagentMode
+  output: SubagentOutput
+  constraints: SubagentConstraint[]
+}
+
+interface InspectorNodeMeta {
+  id: string
+  type: 'workflow' | 'sticky'
+  data: WorkflowNodeData
+}
+
+const subagentModeLabels: Record<SubagentMode, string> = {
+  analyze: '分析',
+  implement: '实现',
+  refactor: '重构',
+  debug: '排障',
+}
+
+const subagentOutputLabels: Record<SubagentOutput, string> = {
+  patch: '直接改代码',
+  summary: '只返回结论',
+  plan: '先给方案',
+}
+
+const subagentConstraintLabels: Record<SubagentConstraint, string> = {
+  'preserve-api': '不改公共接口',
+  'limit-scope': '只动当前模块范围',
+  'run-checks': '完成后跑最小验证',
+  'no-deps': '不要新增依赖',
+}
+
 const workflowDocumentStore = useWorkflowDocumentStore()
 
 workflowDocumentStore.hydrate()
@@ -56,9 +96,12 @@ const documentMessage = ref('')
 const pendingPlacement = ref<'workflow' | 'sticky' | null>(null)
 const shapesOpen = ref(false)
 const iconsOpen = ref(false)
+const inspirationOpen = ref(false)
+const inspectorTab = ref<InspectorTabId>('overview')
 const inspirationNodeId = ref('')
 const inspirationPrompt = ref('')
 const inspirationResult = ref('')
+const nodeSubagentDrafts = ref<Record<string, NodeSubagentDraft>>({})
 const { clearNodeAttachmentDrag, startNodeAttachmentDrag } = useNodeAttachmentDrag()
 
 const nodeTypes = {
@@ -98,17 +141,110 @@ const workflowNodes = computed<WorkflowCanvasNode[]>(() => {
   return result
 })
 
-const selectedNodeData = computed<WorkflowNodeData>(() => {
+const selectedNodeMeta = computed<InspectorNodeMeta | undefined>(() => {
   if (selectedNodeId.value) {
     for (const node of nodes.value) {
       if (node.id === selectedNodeId.value && node.data) {
-        return node.data
+        return {
+          id: node.id,
+          type: node.type === 'sticky' ? 'sticky' : 'workflow',
+          data: node.data,
+        }
       }
     }
   }
 
-  const firstNode = workflowNodes.value[0]
-  return firstNode?.data ?? fallbackNodeData
+  const fallbackNode = workflowNodes.value[0] ?? nodes.value[0]
+
+  if (!fallbackNode?.data) {
+    return undefined
+  }
+
+  return {
+    id: fallbackNode.id,
+    type: fallbackNode.type === 'sticky' ? 'sticky' : 'workflow',
+    data: fallbackNode.data,
+  }
+})
+
+const selectedNodeData = computed<WorkflowNodeData>(() => {
+  return selectedNodeMeta.value?.data ?? fallbackNodeData
+})
+
+const selectedNodeTypeLabel = computed(() => {
+  if (selectedNodeMeta.value?.type === 'sticky') {
+    return 'Selected note'
+  }
+
+  return 'Selected node'
+})
+
+const selectedWorkflowNode = computed<InspectorNodeMeta | undefined>(() => {
+  if (selectedNodeMeta.value?.type === 'workflow') {
+    return selectedNodeMeta.value
+  }
+
+  return undefined
+})
+
+const selectedSubagentDraft = computed<NodeSubagentDraft | undefined>(() => {
+  const nodeId = selectedWorkflowNode.value?.id
+
+  if (!nodeId) {
+    return undefined
+  }
+
+  return nodeSubagentDrafts.value[nodeId]
+})
+
+const selectedSubagentPrompt = computed(() => {
+  const node = selectedWorkflowNode.value
+  const draft = selectedSubagentDraft.value
+
+  if (!node || !draft) {
+    return ''
+  }
+
+  const scopeItems = draft.scopePaths
+    .split(/\r?\n/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+  const entryItems = draft.entryHints
+    .split(/\r?\n/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+  const constraintItems = draft.constraints.map((constraint) => subagentConstraintLabels[constraint])
+  const promptLines = [
+    `你负责处理节点“${node.data?.title ?? node.id}”对应的代码模块。`,
+    `节点类型：${node.data?.kind ?? 'workflow'}。`,
+    `任务模式：${subagentModeLabels[draft.mode]}。`,
+    `任务目标：${draft.objective || '根据当前节点描述完成对应模块处理。'}`,
+  ]
+
+  if (scopeItems.length) {
+    promptLines.push(`模块范围：${scopeItems.join('；')}。`)
+  }
+
+  if (entryItems.length) {
+    promptLines.push(`关键文件或入口：${entryItems.join('；')}。`)
+  }
+
+  if (node.data?.subtitle) {
+    promptLines.push(`业务背景：${node.data.subtitle}`)
+  }
+
+  if (node.data?.hint) {
+    promptLines.push(`补充提示：${node.data.hint}`)
+  }
+
+  if (constraintItems.length) {
+    promptLines.push(`执行限制：${constraintItems.join('；')}。`)
+  }
+
+  promptLines.push(`期望输出：${subagentOutputLabels[draft.output]}。`)
+  promptLines.push('优先保持 UI 提供的信息为准，只在必要范围内补充上下文。')
+
+  return promptLines.join('\n')
 })
 
 const actionNodes = computed<WorkflowCanvasNode[]>(() => {
@@ -181,6 +317,27 @@ const stats = computed(() => {
   }
 })
 
+watch(
+  () => selectedWorkflowNode.value?.id,
+  (nodeId) => {
+    if (!nodeId || nodeSubagentDrafts.value[nodeId]) {
+      return
+    }
+
+    const node = selectedWorkflowNode.value
+
+    if (!node?.data) {
+      return
+    }
+
+    nodeSubagentDrafts.value = {
+      ...nodeSubagentDrafts.value,
+      [nodeId]: createNodeSubagentDraft(node),
+    }
+  },
+  { immediate: true },
+)
+
 const canvasTone = computed(() =>
   theme.value === 'light' ? 'rgba(17, 24, 39, 0.08)' : 'rgba(255, 255, 255, 0.08)',
 )
@@ -208,6 +365,45 @@ function onNodeClick(event: { node: WorkflowCanvasNode }) {
 
 function clearSelection() {
   selectedNodeId.value = null
+}
+
+function setInspectorTab(nextTab: InspectorTabId) {
+  inspectorTab.value = nextTab
+}
+
+function updateSelectedDraft<K extends keyof NodeSubagentDraft>(field: K, value: NodeSubagentDraft[K]) {
+  const nodeId = selectedWorkflowNode.value?.id
+  const currentDraft = selectedSubagentDraft.value
+
+  if (!nodeId || !currentDraft) {
+    return
+  }
+
+  nodeSubagentDrafts.value = {
+    ...nodeSubagentDrafts.value,
+    [nodeId]: {
+      ...currentDraft,
+      [field]: value,
+    },
+  }
+}
+
+function handleDraftTextInput(field: 'objective' | 'scopePaths' | 'entryHints', event: Event) {
+  updateSelectedDraft(field, (event.target as HTMLInputElement | HTMLTextAreaElement | null)?.value ?? '')
+}
+
+function toggleDraftConstraint(constraint: SubagentConstraint) {
+  const currentDraft = selectedSubagentDraft.value
+
+  if (!currentDraft) {
+    return
+  }
+
+  const nextConstraints = currentDraft.constraints.includes(constraint)
+    ? currentDraft.constraints.filter((item) => item !== constraint)
+    : [...currentDraft.constraints, constraint]
+
+  updateSelectedDraft('constraints', nextConstraints)
 }
 
 function cancelPendingPlacement() {
@@ -356,6 +552,10 @@ function toggleShapesOpen() {
 
 function toggleIconsOpen() {
   iconsOpen.value = !iconsOpen.value
+}
+
+function toggleInspirationOpen() {
+  inspirationOpen.value = !inspirationOpen.value
 }
 
 function handleInspirationNodeChange(event: Event) {
@@ -553,6 +753,20 @@ function minimapNodeColor(node: WorkflowCanvasNode) {
   if (node.data?.status === 'error') return '#d9534f'
   return theme.value === 'light' ? '#7c8ba1' : '#9fb1cc'
 }
+
+function createNodeSubagentDraft(node: InspectorNodeMeta): NodeSubagentDraft {
+  const defaultScope = `src/${node.id}/\nsrc/${node.data.title.toLowerCase().replace(/\s+/g, '-')}/`
+  const defaultMode: SubagentMode = node.data.kind === 'trigger' ? 'analyze' : 'implement'
+
+  return {
+    objective: `围绕“${node.data.title}”完成当前节点对应的模块处理。`,
+    scopePaths: defaultScope,
+    entryHints: node.data.hint ?? '',
+    mode: defaultMode,
+    output: defaultMode === 'analyze' ? 'summary' : 'patch',
+    constraints: ['limit-scope', 'preserve-api', 'run-checks'],
+  }
+}
 </script>
 
 <template>
@@ -592,57 +806,67 @@ function minimapNodeColor(node: WorkflowCanvasNode) {
         </div>
       </dl>
 
-      <section class="inspiration-workbench">
-        <div class="inspiration-workbench-header">
-          <p class="inspector-eyebrow">Inspiration Lab</p>
-          <span class="inspiration-workbench-copy">为 action 节点快速触发灵感输出</span>
-        </div>
-
-        <label class="inspiration-field">
-          <span>Action node</span>
-          <select
-            class="inspiration-select"
-            :value="activeInspirationNodeId"
-            :disabled="!actionNodes.length"
-            @change="handleInspirationNodeChange"
-          >
-            <option v-if="!actionNodes.length" value="">No action nodes</option>
-            <option v-for="node in actionNodes" :key="node.id" :value="node.id">
-              {{ node.data?.title ?? node.id }}
-            </option>
-          </select>
-        </label>
-
-        <label class="inspiration-field">
-          <span>Input</span>
-          <textarea
-            v-model="inspirationPrompt"
-            class="inspiration-textarea"
-            rows="4"
-            :disabled="!actionNodes.length"
-            placeholder="Describe the spark you want for this action node..."
-          />
-        </label>
-
+      <section class="inspiration-workbench" :class="{ collapsed: !inspirationOpen }">
         <button
           type="button"
-          class="inspiration-button"
-          :disabled="!actionNodes.length"
-          @click="handleInspirationBurst"
+          class="inspiration-workbench-header"
+          :aria-expanded="inspirationOpen"
+          @click="toggleInspirationOpen"
         >
-          SPARK
+          <span class="inspiration-workbench-header-copy">
+            <span class="inspector-eyebrow">Inspiration Lab</span>
+            <span class="inspiration-workbench-copy">为 action 节点快速触发灵感输出</span>
+          </span>
+          <span class="inspiration-workbench-caret" :class="{ open: inspirationOpen }">▾</span>
         </button>
 
-        <label class="inspiration-field">
-          <span>Output</span>
-          <textarea
-            :value="inspirationResult"
-            class="inspiration-textarea inspiration-output"
-            rows="3"
-            readonly
-            :placeholder="activeInspirationNode ? `Ready for ${activeInspirationNode.data?.title}` : 'No action nodes available'"
-          />
-        </label>
+        <div v-if="inspirationOpen" class="inspiration-workbench-body">
+          <label class="inspiration-field">
+            <span>Action node</span>
+            <select
+              class="inspiration-select"
+              :value="activeInspirationNodeId"
+              :disabled="!actionNodes.length"
+              @change="handleInspirationNodeChange"
+            >
+              <option v-if="!actionNodes.length" value="">No action nodes</option>
+              <option v-for="node in actionNodes" :key="node.id" :value="node.id">
+                {{ node.data?.title ?? node.id }}
+              </option>
+            </select>
+          </label>
+
+          <label class="inspiration-field">
+            <span>Input</span>
+            <textarea
+              v-model="inspirationPrompt"
+              class="inspiration-textarea"
+              rows="4"
+              :disabled="!actionNodes.length"
+              placeholder="Describe the spark you want for this action node..."
+            />
+          </label>
+
+          <button
+            type="button"
+            class="inspiration-button"
+            :disabled="!actionNodes.length"
+            @click="handleInspirationBurst"
+          >
+            SPARK
+          </button>
+
+          <label class="inspiration-field">
+            <span>Output</span>
+            <textarea
+              :value="inspirationResult"
+              class="inspiration-textarea inspiration-output"
+              rows="3"
+              readonly
+              :placeholder="activeInspirationNode ? `Ready for ${activeInspirationNode.data?.title}` : 'No action nodes available'"
+            />
+          </label>
+        </div>
       </section>
 
       <section class="attachment-panel">
@@ -709,16 +933,151 @@ function minimapNodeColor(node: WorkflowCanvasNode) {
       </section>
 
       <section class="inspector-card">
-        <p class="inspector-eyebrow">Selected node</p>
-        <strong>{{ selectedNodeData.title }}</strong>
-        <span>{{ selectedNodeData.subtitle }}</span>
-        <p>
-          {{ selectedNodeData.hint ?? '拖拽节点、创建连线，或用左侧按钮快速扩展流程。' }}
-        </p>
-        <p>
-          Shape: {{ getWorkflowNodeShape(selectedNodeData.attachments) }} · Icon:
-          {{ getWorkflowNodeIconAssetId(selectedNodeData.attachments) ?? selectedNodeData.icon }}
-        </p>
+        <div class="inspector-card-header">
+          <div>
+            <p class="inspector-eyebrow">{{ selectedNodeTypeLabel }}</p>
+            <strong>{{ selectedNodeData.title }}</strong>
+          </div>
+
+          <div class="inspector-tabs" role="tablist" aria-label="Node inspector tabs">
+            <button
+              type="button"
+              class="inspector-tab"
+              :class="{ active: inspectorTab === 'overview' }"
+              @click="setInspectorTab('overview')"
+            >
+              概览
+            </button>
+            <button
+              type="button"
+              class="inspector-tab"
+              :class="{ active: inspectorTab === 'subagent' }"
+              @click="setInspectorTab('subagent')"
+            >
+              Subagent
+            </button>
+          </div>
+        </div>
+
+        <div v-if="inspectorTab === 'overview'" class="inspector-panel">
+          <span>{{ selectedNodeData.subtitle }}</span>
+          <p>
+            {{ selectedNodeData.hint ?? '拖拽节点、创建连线，或用左侧按钮快速扩展流程。' }}
+          </p>
+          <p>
+            Shape: {{ getWorkflowNodeShape(selectedNodeData.attachments) }} · Icon:
+            {{ getWorkflowNodeIconAssetId(selectedNodeData.attachments) ?? selectedNodeData.icon }}
+          </p>
+          <p v-if="selectedNodeMeta">
+            节点 ID: {{ selectedNodeMeta.id }} · Kind: {{ selectedNodeData.kind }}
+          </p>
+        </div>
+
+        <div v-else class="inspector-panel inspector-subagent-panel">
+          <template v-if="selectedWorkflowNode && selectedSubagentDraft">
+            <p class="inspector-subagent-copy">
+              这个 tab 用来把“目录模块 + 执行限制”转成后端 subagent 可直接消费的提示词，不要求展示所有底层细节，只保留足够驱动执行的信息。
+            </p>
+
+            <div class="inspector-chip-row">
+              <span class="inspector-chip">{{ selectedWorkflowNode.data?.kind }}</span>
+              <span class="inspector-chip">{{ subagentModeLabels[selectedSubagentDraft.mode] }}</span>
+              <span class="inspector-chip">{{ subagentOutputLabels[selectedSubagentDraft.output] }}</span>
+            </div>
+
+            <label class="inspector-field">
+              <span>任务目标</span>
+              <textarea
+                class="inspector-textarea"
+                rows="3"
+                :value="selectedSubagentDraft.objective"
+                placeholder="例如：在当前目录内补齐模块编排逻辑，并保持现有接口不变"
+                @input="handleDraftTextInput('objective', $event)"
+              />
+            </label>
+
+            <label class="inspector-field">
+              <span>模块范围</span>
+              <textarea
+                class="inspector-textarea"
+                rows="3"
+                :value="selectedSubagentDraft.scopePaths"
+                placeholder="每行一个目录或文件，告诉 subagent 允许关注哪里"
+                @input="handleDraftTextInput('scopePaths', $event)"
+              />
+            </label>
+
+            <label class="inspector-field">
+              <span>关键文件 / 入口</span>
+              <textarea
+                class="inspector-textarea"
+                rows="2"
+                :value="selectedSubagentDraft.entryHints"
+                placeholder="例如：index.ts、controller.ts、某个导出函数名"
+                @input="handleDraftTextInput('entryHints', $event)"
+              />
+            </label>
+
+            <div class="inspector-field">
+              <span>任务模式</span>
+              <div class="inspector-segmented">
+                <button
+                  v-for="(label, mode) in subagentModeLabels"
+                  :key="mode"
+                  type="button"
+                  class="inspector-segmented-button"
+                  :class="{ active: selectedSubagentDraft.mode === mode }"
+                  @click="updateSelectedDraft('mode', mode)"
+                >
+                  {{ label }}
+                </button>
+              </div>
+            </div>
+
+            <div class="inspector-field">
+              <span>输出形式</span>
+              <div class="inspector-segmented compact">
+                <button
+                  v-for="(label, output) in subagentOutputLabels"
+                  :key="output"
+                  type="button"
+                  class="inspector-segmented-button"
+                  :class="{ active: selectedSubagentDraft.output === output }"
+                  @click="updateSelectedDraft('output', output)"
+                >
+                  {{ label }}
+                </button>
+              </div>
+            </div>
+
+            <div class="inspector-field">
+              <span>执行限制</span>
+              <div class="inspector-check-grid">
+                <label
+                  v-for="(label, constraint) in subagentConstraintLabels"
+                  :key="constraint"
+                  class="inspector-check"
+                >
+                  <input
+                    type="checkbox"
+                    :checked="selectedSubagentDraft.constraints.includes(constraint)"
+                    @change="toggleDraftConstraint(constraint)"
+                  />
+                  <span>{{ label }}</span>
+                </label>
+              </div>
+            </div>
+
+            <div class="inspector-field">
+              <span>Prompt Preview</span>
+              <pre class="inspector-prompt-preview">{{ selectedSubagentPrompt }}</pre>
+            </div>
+          </template>
+
+          <p v-else class="inspector-empty-state">
+            这个 tab 仅对 workflow 节点启用。请选择一个真正代表目录模块的节点，再通过 UI 填任务目标、范围和限制。
+          </p>
+        </div>
       </section>
     </aside>
 
@@ -922,6 +1281,18 @@ button.primary {
 }
 
 .inspiration-workbench-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.inspiration-workbench-header-copy {
   display: grid;
   gap: 6px;
 }
@@ -929,6 +1300,32 @@ button.primary {
 .inspiration-workbench-copy {
   font-size: 13px;
   color: var(--text-secondary);
+}
+
+.inspiration-workbench-caret {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel-surface) 76%, transparent);
+  color: var(--text-secondary);
+  transition: transform 0.18s ease, color 0.18s ease;
+}
+
+.inspiration-workbench-caret.open {
+  transform: rotate(180deg);
+  color: var(--text-primary);
+}
+
+.inspiration-workbench-body {
+  display: grid;
+  gap: 14px;
+}
+
+.inspiration-workbench.collapsed {
+  gap: 0;
 }
 
 .inspiration-field {
@@ -1153,6 +1550,18 @@ button.primary {
   gap: 8px;
 }
 
+.inspector-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.inspector-panel {
+  display: grid;
+  gap: 10px;
+}
+
 .inspector-card span,
 .inspector-card p {
   color: var(--text-secondary);
@@ -1161,6 +1570,164 @@ button.primary {
 .inspector-card p {
   margin: 0;
   line-height: 1.6;
+}
+
+.inspector-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel-surface) 82%, transparent);
+  border: 1px solid var(--panel-border);
+}
+
+.inspector-tab {
+  min-width: 82px;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.inspector-tab.active {
+  background: rgba(255, 109, 58, 0.12);
+  color: var(--accent);
+}
+
+.inspector-subagent-panel {
+  gap: 14px;
+}
+
+.inspector-subagent-copy {
+  font-size: 13px;
+}
+
+.inspector-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.inspector-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--panel-surface));
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--panel-border));
+  color: var(--text-primary);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.inspector-field {
+  display: grid;
+  gap: 8px;
+}
+
+.inspector-field > span {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.inspector-textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 72px;
+  padding: 12px 13px;
+  border-radius: 16px;
+  border: 1px solid var(--panel-border);
+  background: color-mix(in srgb, var(--panel-surface) 82%, transparent);
+  color: var(--text-primary);
+  font: inherit;
+  line-height: 1.55;
+}
+
+.inspector-textarea:focus {
+  outline: 2px solid color-mix(in srgb, var(--accent) 34%, transparent);
+  outline-offset: 1px;
+}
+
+.inspector-segmented {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.inspector-segmented.compact {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.inspector-segmented-button {
+  min-height: 42px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid var(--panel-border);
+  background: color-mix(in srgb, var(--panel-surface) 86%, transparent);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.inspector-segmented-button.active {
+  border-color: color-mix(in srgb, var(--accent) 36%, var(--panel-border));
+  background: color-mix(in srgb, var(--accent) 14%, var(--panel-surface));
+  color: var(--text-primary);
+}
+
+.inspector-check-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.inspector-check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid var(--panel-border);
+  background: color-mix(in srgb, var(--panel-surface) 84%, transparent);
+}
+
+.inspector-check input {
+  margin: 0;
+}
+
+.inspector-check span {
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.inspector-prompt-preview {
+  margin: 0;
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid var(--panel-border);
+  background: rgba(7, 10, 16, 0.28);
+  color: var(--text-primary);
+  font-family: 'Cascadia Code', 'SFMono-Regular', Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.inspector-empty-state {
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px dashed var(--panel-border);
+  background: color-mix(in srgb, var(--panel-surface) 76%, transparent);
 }
 
 .editor-stage {
@@ -1257,6 +1824,24 @@ button.primary {
 
   .toolbar-tags {
     justify-content: flex-start;
+  }
+
+  .inspector-card-header {
+    flex-direction: column;
+  }
+
+  .inspector-tabs {
+    width: 100%;
+  }
+
+  .inspector-tab {
+    flex: 1 1 0;
+  }
+
+  .inspector-segmented,
+  .inspector-segmented.compact,
+  .inspector-check-grid {
+    grid-template-columns: 1fr;
   }
 
   .workflow-canvas {
