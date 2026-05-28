@@ -97,6 +97,12 @@ interface DashboardEvent {
   summary: string
 }
 
+interface EventStreamFilter {
+  sourceEvent: string
+  module: string
+  contracts: string[]
+}
+
 interface WorkflowWsEnvelope {
   type?: string
   payload?: Record<string, unknown>
@@ -220,7 +226,9 @@ const isLoadingDecisionQueue = ref(false)
 const approvingDecisionId = ref('')
 const selectedDecisionDegradeMode = ref<DecisionDegradationMode>('wait')
 const expandedDecisionItems = ref<Record<string, boolean>>({})
+const eventStreamFilter = ref<EventStreamFilter | null>(null)
 let nodeHighlightTimer: number | null = null
+let edgeHighlightTimer: number | null = null
 let workflowWs: WebSocket | null = null
 let mockDispatcherTimer: number | null = null
 const { clearNodeAttachmentDrag, startNodeAttachmentDrag } = useNodeAttachmentDrag()
@@ -258,6 +266,13 @@ onUnmounted(() => {
     window.clearTimeout(nodeHighlightTimer)
     nodeHighlightTimer = null
   }
+
+  if (edgeHighlightTimer !== null) {
+    window.clearTimeout(edgeHighlightTimer)
+    edgeHighlightTimer = null
+  }
+
+  clearEdgeHighlightClass()
 })
 
 const workflowNodes = computed<WorkflowCanvasNode[]>(() => {
@@ -445,7 +460,74 @@ const orchestrationStats = computed(() => {
   }
 })
 
-const recentEvents = computed(() => eventLog.value.slice(0, 18))
+const recentEvents = computed(() => eventLog.value.slice(0, 36))
+
+function doesEventMatchFilter(event: DashboardEvent, filter: EventStreamFilter) {
+  const normalizedType = event.type.toLowerCase()
+  const normalizedAgent = event.agentId.toLowerCase()
+  const normalizedSummary = event.summary.toLowerCase()
+  const normalizedSourceEvent = filter.sourceEvent.toLowerCase()
+  const normalizedModule = filter.module.toLowerCase()
+
+  const sourceMatches = !normalizedSourceEvent || normalizedType.includes(normalizedSourceEvent)
+  const moduleMatches = !normalizedModule
+    || normalizedAgent.includes(normalizedModule)
+    || normalizedSummary.includes(normalizedModule)
+  let contractMatches = true
+
+  if (filter.contracts.length) {
+    contractMatches = false
+
+    for (const contractHint of filter.contracts) {
+      const normalizedHint = contractHint.toLowerCase()
+
+      if (normalizedHint && (normalizedSummary.includes(normalizedHint) || normalizedAgent.includes(normalizedHint))) {
+        contractMatches = true
+        break
+      }
+    }
+  }
+
+  return sourceMatches && moduleMatches && contractMatches
+}
+
+const filteredRecentEvents = computed(() => {
+  const filter = eventStreamFilter.value
+
+  if (!filter) {
+    return recentEvents.value
+  }
+
+  const matched: DashboardEvent[] = []
+
+  for (const event of eventLog.value) {
+    if (doesEventMatchFilter(event, filter)) {
+      matched.push(event)
+    }
+
+    if (matched.length >= 36) {
+      break
+    }
+  }
+
+  return matched
+})
+
+const highlightedEventIdSet = computed(() => {
+  const filter = eventStreamFilter.value
+
+  if (!filter) {
+    return new Set<string>()
+  }
+
+  const ids = new Set<string>()
+
+  for (const event of filteredRecentEvents.value) {
+    ids.add(event.id)
+  }
+
+  return ids
+})
 
 const decisionQueueStats = computed(() => {
   const total = decisionQueue.value.length
@@ -942,6 +1024,36 @@ function clearNodeHighlightClass() {
   }
 }
 
+function clearEdgeHighlightClass() {
+  const edgeList = edges.value as Array<{
+    class?: string
+    source: string
+    target: string
+    data?: { kind?: string; label?: string }
+  }>
+
+  for (const edge of edgeList) {
+    if (edge.class === 'contract-edge-focus') {
+      edge.class = ''
+    }
+  }
+}
+
+function clearEventStreamFilter() {
+  eventStreamFilter.value = null
+}
+
+function focusSourceEventsForDecision(item: DecisionQueueViewItem) {
+  eventStreamFilter.value = {
+    sourceEvent: item.sourceEvent,
+    module: item.module,
+    contracts: [...item.relatedContracts],
+  }
+
+  const matchedCount = filteredRecentEvents.value.length
+  setDocumentMessage(matchedCount ? `已定位 ${matchedCount} 条来源事件` : '未匹配到来源事件，请先刷新事件流')
+}
+
 function resolveProjectNodeIdFromDecision(item: DecisionQueueViewItem) {
   const byModule = findNodeIdByProjectName(item.module)
 
@@ -1000,10 +1112,49 @@ async function focusProjectAgentNode(item: DecisionQueueViewItem) {
   }
 
   clearNodeHighlightClass()
+  clearEdgeHighlightClass()
   targetNode.class = 'agent-focus-flash'
 
   if (nodeHighlightTimer !== null) {
     window.clearTimeout(nodeHighlightTimer)
+  }
+
+  if (edgeHighlightTimer !== null) {
+    window.clearTimeout(edgeHighlightTimer)
+  }
+
+  const edgeList = edges.value as Array<{
+    class?: string
+    source: string
+    target: string
+    data?: { kind?: string; label?: string }
+  }>
+  const relatedHints = item.relatedContracts.map((value) => value.toLowerCase())
+
+  for (const edge of edgeList) {
+    const isDependencyEdge = edge.data?.kind === 'data'
+
+    if (!isDependencyEdge) {
+      continue
+    }
+
+    const touchesTargetNode = edge.source === targetNodeId || edge.target === targetNodeId
+    let relatedByHint = false
+
+    if (!touchesTargetNode && relatedHints.length) {
+      const edgeValues = `${edge.source} ${edge.target} ${edge.data?.label || ''}`.toLowerCase()
+
+      for (const hint of relatedHints) {
+        if (hint && edgeValues.includes(hint)) {
+          relatedByHint = true
+          break
+        }
+      }
+    }
+
+    if (touchesTargetNode || relatedByHint) {
+      edge.class = 'contract-edge-focus'
+    }
   }
 
   nodeHighlightTimer = window.setTimeout(() => {
@@ -1011,13 +1162,18 @@ async function focusProjectAgentNode(item: DecisionQueueViewItem) {
     nodeHighlightTimer = null
   }, 1600)
 
+  edgeHighlightTimer = window.setTimeout(() => {
+    clearEdgeHighlightClass()
+    edgeHighlightTimer = null
+  }, 2200)
+
   await applyViewport({
     x: -targetNode.position.x + 480,
     y: -targetNode.position.y + 240,
     zoom: 1,
   })
 
-  setDocumentMessage(`已跳转并高亮 ${targetNodeId}`)
+  setDocumentMessage(`已跳转并高亮 ${targetNodeId} 及其 contract 依赖边`)
 }
 
 function toDecisionQueueViewItem(raw: DecisionQueueItem): DecisionQueueViewItem | null {
@@ -1870,10 +2026,17 @@ function handleResetDocument() {
   workflowDocumentStore.reset()
   stopMockDispatcher()
   clearNodeHighlightClass()
+  clearEdgeHighlightClass()
+  clearEventStreamFilter()
 
   if (nodeHighlightTimer !== null) {
     window.clearTimeout(nodeHighlightTimer)
     nodeHighlightTimer = null
+  }
+
+  if (edgeHighlightTimer !== null) {
+    window.clearTimeout(edgeHighlightTimer)
+    edgeHighlightTimer = null
   }
 
   cancelPendingPlacement()
@@ -2143,14 +2306,33 @@ function createNodeSubagentDraft(node: InspectorNodeMeta): NodeSubagentDraft {
         </div>
 
         <div class="orchestration-event-stream">
-          <p class="orchestration-event-title">实时事件流</p>
-          <article v-for="event in recentEvents" :key="event.id" class="orchestration-event-item">
+          <div class="orchestration-event-header">
+            <p class="orchestration-event-title">实时事件流</p>
+            <button
+              v-if="eventStreamFilter"
+              type="button"
+              class="orchestration-clear-filter"
+              @click="clearEventStreamFilter"
+            >
+              清除过滤
+            </button>
+          </div>
+          <p v-if="eventStreamFilter" class="orchestration-filter-hint">
+            filtering by {{ eventStreamFilter.sourceEvent }} · {{ eventStreamFilter.module }}
+          </p>
+          <article
+            v-for="event in filteredRecentEvents"
+            :key="event.id"
+            class="orchestration-event-item"
+            :class="{ highlighted: highlightedEventIdSet.has(event.id) }"
+          >
             <header>
               <strong>{{ event.type }}</strong>
               <span>{{ event.agentId }}</span>
             </header>
             <p>{{ event.summary }}</p>
           </article>
+          <p v-if="!filteredRecentEvents.length" class="orchestration-summary">当前过滤条件下没有匹配事件。</p>
         </div>
 
         <section class="decision-queue-card">
@@ -2223,6 +2405,9 @@ function createNodeSubagentDraft(node: InspectorNodeMeta): NodeSubagentDraft {
                 <div class="decision-queue-detail-field">
                   <span>Related Contract</span>
                   <p>{{ item.relatedContracts.length ? item.relatedContracts.join(', ') : 'none' }}</p>
+                </div>
+                <div class="decision-queue-detail-field decision-queue-detail-actions">
+                  <button type="button" @click="focusSourceEventsForDecision(item)">定位来源事件</button>
                 </div>
                 <div class="decision-queue-detail-field">
                   <span>Options</span>
@@ -2801,6 +2986,11 @@ button.primary {
 .orchestration-panel {
   display: grid;
   gap: 14px;
+  min-width: 0;
+}
+
+.orchestration-panel > * {
+  min-width: 0;
 }
 
 .orchestration-header {
@@ -2933,6 +3123,25 @@ button.primary {
   padding-top: 4px;
 }
 
+.orchestration-event-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.orchestration-clear-filter {
+  min-height: 30px;
+  padding: 0 10px;
+  font-size: 11px;
+}
+
+.orchestration-filter-hint {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
 .orchestration-event-title {
   margin: 0;
   font-size: 12px;
@@ -2959,6 +3168,11 @@ button.primary {
   font-size: 12px;
   line-height: 1.45;
   color: var(--text-secondary);
+}
+
+.orchestration-event-item.highlighted {
+  border-color: color-mix(in srgb, var(--accent) 48%, var(--panel-border));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 24%, transparent);
 }
 
 .decision-queue-card {
@@ -3062,9 +3276,26 @@ button.primary {
   font-family: 'Cascadia Code', 'SFMono-Regular', Consolas, monospace;
 }
 
+.decision-queue-detail-actions {
+  display: flex;
+}
+
+.decision-queue-detail-actions button {
+  min-height: 34px;
+  font-size: 12px;
+}
+
 :deep(.vue-flow__node.agent-focus-flash) {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 78%, transparent), 0 0 18px rgba(255, 109, 58, 0.5);
   animation: agent-node-focus-flash 1.6s ease;
+}
+
+:deep(.vue-flow__edge-path.contract-edge-focus),
+:deep(.vue-flow__edge.contract-edge-focus .vue-flow__edge-path) {
+  stroke: color-mix(in srgb, var(--accent) 82%, #ffb38f);
+  stroke-width: 3;
+  filter: drop-shadow(0 0 5px rgba(255, 109, 58, 0.65));
+  animation: contract-edge-focus-flash 2.2s ease;
 }
 
 @keyframes agent-node-focus-flash {
@@ -3078,6 +3309,20 @@ button.primary {
 
   100% {
     transform: scale(1);
+  }
+}
+
+@keyframes contract-edge-focus-flash {
+  0% {
+    stroke-opacity: 0.45;
+  }
+
+  45% {
+    stroke-opacity: 1;
+  }
+
+  100% {
+    stroke-opacity: 0.75;
   }
 }
 
@@ -3137,6 +3382,11 @@ button.primary {
 .inspiration-field {
   display: grid;
   gap: 8px;
+  min-width: 0;
+}
+
+.inspiration-field > * {
+  min-width: 0;
 }
 
 .inspiration-field span {
@@ -3144,11 +3394,14 @@ button.primary {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--text-muted);
+  overflow-wrap: anywhere;
 }
 
 .inspiration-select,
 .inspiration-textarea {
   width: 100%;
+  box-sizing: border-box;
+  min-width: 0;
   border-radius: 14px;
   border: 1px solid var(--panel-border);
   background: color-mix(in srgb, var(--panel-surface) 88%, transparent);
@@ -3361,11 +3614,26 @@ button.primary {
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
+  min-width: 0;
+}
+
+.inspector-card-header > * {
+  min-width: 0;
+}
+
+.inspector-card-header strong {
+  display: block;
+  overflow-wrap: anywhere;
 }
 
 .inspector-panel {
   display: grid;
   gap: 10px;
+  min-width: 0;
+}
+
+.inspector-panel > * {
+  min-width: 0;
 }
 
 .inspector-card span,
@@ -3381,6 +3649,8 @@ button.primary {
 .inspector-tabs {
   display: inline-flex;
   align-items: center;
+  min-width: 0;
+  max-width: 100%;
   gap: 6px;
   padding: 4px;
   border-radius: 999px;
@@ -3389,7 +3659,7 @@ button.primary {
 }
 
 .inspector-tab {
-  min-width: 82px;
+  min-width: 0;
   padding: 8px 12px;
   border: 0;
   border-radius: 999px;
@@ -3397,6 +3667,7 @@ button.primary {
   color: var(--text-secondary);
   font-size: 12px;
   font-weight: 600;
+  overflow-wrap: anywhere;
 }
 
 .inspector-tab.active {
@@ -3446,6 +3717,8 @@ button.primary {
 
 .inspector-textarea {
   width: 100%;
+  box-sizing: border-box;
+  min-width: 0;
   resize: vertical;
   min-height: 72px;
   padding: 12px 13px;
