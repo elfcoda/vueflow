@@ -519,6 +519,12 @@ function isDecisionInCompareSet(item: DecisionQueueViewItem) {
   return false
 }
 
+function getDecisionColorStyle(item: DecisionQueueViewItem) {
+  const filter = buildEventFilterFromDecision(item)
+
+  return getFilterColorStyle(filter)
+}
+
 function doesEventMatchFilter(event: DashboardEvent, filter: EventStreamFilter) {
   const normalizedType = event.type.toLowerCase()
   const normalizedAgent = event.agentId.toLowerCase()
@@ -2517,7 +2523,10 @@ function createNodeSubagentDraft(node: InspectorNodeMeta): NodeSubagentDraft {
           <div class="decision-queue-list">
             <article v-for="item in decisionQueue" :key="`${item.decisionId}-${item.workItemId}`" class="decision-queue-item">
               <div class="decision-queue-main">
-                <strong>{{ item.module }}</strong>
+                <div class="decision-title-row" :style="getDecisionColorStyle(item)">
+                  <span class="decision-color-strip" aria-hidden="true"></span>
+                  <strong>{{ item.module }}</strong>
+                </div>
                 <p>{{ item.workItemId }} · {{ item.decisionType }} · {{ item.status }}</p>
                 <p>source: {{ item.sourceEvent }}</p>
                 <div class="decision-hit-metrics">
@@ -3412,6 +3421,21 @@ button.primary {
   margin: 4px 0 0;
   font-size: 12px;
   color: var(--text-secondary);
+}
+
+.decision-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.decision-color-strip {
+  display: inline-block;
+  width: 4px;
+  height: 16px;
+  border-radius: 999px;
+  background: var(--decision-filter-color, var(--accent));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--decision-filter-color, var(--accent)) 36%, transparent);
 }
 
 .decision-hit-metrics {
