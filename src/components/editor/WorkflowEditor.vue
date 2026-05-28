@@ -98,6 +98,9 @@ interface DashboardEvent {
 }
 
 interface EventStreamFilter {
+  key: string
+  label: string
+  colorToken: string
   sourceEvent: string
   module: string
   contracts: string[]
@@ -179,6 +182,17 @@ const runStateLabels: Record<AgentRunState, string> = {
   error: 'Error',
 }
 
+const decisionComparePalette = [
+  '#ff7a45',
+  '#38bdf8',
+  '#34d399',
+  '#f59e0b',
+  '#a78bfa',
+  '#fb7185',
+  '#22c55e',
+  '#60a5fa',
+]
+
 const workflowDocumentStore = useWorkflowDocumentStore()
 
 workflowDocumentStore.hydrate()
@@ -226,7 +240,8 @@ const isLoadingDecisionQueue = ref(false)
 const approvingDecisionId = ref('')
 const selectedDecisionDegradeMode = ref<DecisionDegradationMode>('wait')
 const expandedDecisionItems = ref<Record<string, boolean>>({})
-const eventStreamFilter = ref<EventStreamFilter | null>(null)
+const eventStreamFilters = ref<EventStreamFilter[]>([])
+const eventStreamFilterLocked = ref(false)
 let nodeHighlightTimer: number | null = null
 let edgeHighlightTimer: number | null = null
 let workflowWs: WebSocket | null = null
@@ -462,6 +477,48 @@ const orchestrationStats = computed(() => {
 
 const recentEvents = computed(() => eventLog.value.slice(0, 36))
 
+function buildEventFilterFromDecision(item: DecisionQueueViewItem): EventStreamFilter {
+  const key = decisionItemKey(item)
+
+  return {
+    key,
+    label: `${item.module} · ${item.workItemId}`,
+    colorToken: decisionComparePalette[Math.abs(hashString(key)) % decisionComparePalette.length],
+    sourceEvent: item.sourceEvent,
+    module: item.module,
+    contracts: [...item.relatedContracts],
+  }
+}
+
+function hashString(input: string) {
+  let hash = 0
+
+  for (let index = 0; index < input.length; index += 1) {
+    hash = (hash << 5) - hash + input.charCodeAt(index)
+    hash |= 0
+  }
+
+  return hash
+}
+
+function getFilterColorStyle(filter: EventStreamFilter) {
+  return {
+    '--decision-filter-color': filter.colorToken,
+  }
+}
+
+function isDecisionInCompareSet(item: DecisionQueueViewItem) {
+  const key = decisionItemKey(item)
+
+  for (const filter of eventStreamFilters.value) {
+    if (filter.key === key) {
+      return true
+    }
+  }
+
+  return false
+}
+
 function doesEventMatchFilter(event: DashboardEvent, filter: EventStreamFilter) {
   const normalizedType = event.type.toLowerCase()
   const normalizedAgent = event.agentId.toLowerCase()
@@ -492,16 +549,25 @@ function doesEventMatchFilter(event: DashboardEvent, filter: EventStreamFilter) 
 }
 
 const filteredRecentEvents = computed(() => {
-  const filter = eventStreamFilter.value
+  const filters = eventStreamFilters.value
 
-  if (!filter) {
+  if (!filters.length) {
     return recentEvents.value
   }
 
   const matched: DashboardEvent[] = []
 
   for (const event of eventLog.value) {
-    if (doesEventMatchFilter(event, filter)) {
+    let isMatched = false
+
+    for (const filter of filters) {
+      if (doesEventMatchFilter(event, filter)) {
+        isMatched = true
+        break
+      }
+    }
+
+    if (isMatched) {
       matched.push(event)
     }
 
@@ -513,10 +579,28 @@ const filteredRecentEvents = computed(() => {
   return matched
 })
 
-const highlightedEventIdSet = computed(() => {
-  const filter = eventStreamFilter.value
+const highlightedEventFilterMap = computed(() => {
+  const result: Record<string, EventStreamFilter> = {}
+  const filters = eventStreamFilters.value
 
-  if (!filter) {
+  if (!filters.length) {
+    return result
+  }
+
+  for (const event of filteredRecentEvents.value) {
+    for (const filter of filters) {
+      if (doesEventMatchFilter(event, filter)) {
+        result[event.id] = filter
+        break
+      }
+    }
+  }
+
+  return result
+})
+
+const highlightedEventIdSet = computed(() => {
+  if (!eventStreamFilters.value.length) {
     return new Set<string>()
   }
 
@@ -528,6 +612,63 @@ const highlightedEventIdSet = computed(() => {
 
   return ids
 })
+
+function getDecisionEventHitCount(item: DecisionQueueViewItem) {
+  const filter = buildEventFilterFromDecision(item)
+  let count = 0
+
+  for (const event of eventLog.value) {
+    if (doesEventMatchFilter(event, filter)) {
+      count += 1
+    }
+  }
+
+  return count
+}
+
+function getRelatedContractEdgeIds(item: DecisionQueueViewItem, targetNodeId = '') {
+  const edgeIds: string[] = []
+  const edgeList = edges.value as Array<{
+    id: string
+    source: string
+    target: string
+    data?: { kind?: string; label?: string }
+  }>
+  const relatedHints = item.relatedContracts.map((value) => value.toLowerCase())
+
+  for (const edge of edgeList) {
+    const isDependencyEdge = edge.data?.kind === 'data'
+
+    if (!isDependencyEdge) {
+      continue
+    }
+
+    const touchesTargetNode = !!targetNodeId && (edge.source === targetNodeId || edge.target === targetNodeId)
+    let relatedByHint = false
+
+    if (!touchesTargetNode && relatedHints.length) {
+      const edgeValues = `${edge.source} ${edge.target} ${edge.data?.label || ''}`.toLowerCase()
+
+      for (const hint of relatedHints) {
+        if (hint && edgeValues.includes(hint)) {
+          relatedByHint = true
+          break
+        }
+      }
+    }
+
+    if (touchesTargetNode || relatedByHint) {
+      edgeIds.push(edge.id)
+    }
+  }
+
+  return edgeIds
+}
+
+function getDecisionEdgeHitCount(item: DecisionQueueViewItem) {
+  const targetNodeId = resolveProjectNodeIdFromDecision(item)
+  return getRelatedContractEdgeIds(item, targetNodeId).length
+}
 
 const decisionQueueStats = computed(() => {
   const total = decisionQueue.value.length
@@ -1040,18 +1181,36 @@ function clearEdgeHighlightClass() {
 }
 
 function clearEventStreamFilter() {
-  eventStreamFilter.value = null
+  eventStreamFilters.value = []
+}
+
+function removeEventStreamFilter(key: string) {
+  eventStreamFilters.value = eventStreamFilters.value.filter((item) => item.key !== key)
 }
 
 function focusSourceEventsForDecision(item: DecisionQueueViewItem) {
-  eventStreamFilter.value = {
-    sourceEvent: item.sourceEvent,
-    module: item.module,
-    contracts: [...item.relatedContracts],
+  const nextFilter = buildEventFilterFromDecision(item)
+
+  if (!eventStreamFilterLocked.value) {
+    eventStreamFilters.value = [nextFilter]
+  } else {
+    const existingIndex = eventStreamFilters.value.findIndex((filter) => filter.key === nextFilter.key)
+
+    if (existingIndex >= 0) {
+      const cloned = [...eventStreamFilters.value]
+      cloned[existingIndex] = nextFilter
+      eventStreamFilters.value = cloned
+    } else {
+      eventStreamFilters.value = [...eventStreamFilters.value, nextFilter]
+    }
   }
 
   const matchedCount = filteredRecentEvents.value.length
-  setDocumentMessage(matchedCount ? `已定位 ${matchedCount} 条来源事件` : '未匹配到来源事件，请先刷新事件流')
+  setDocumentMessage(
+    matchedCount
+      ? `已定位 ${matchedCount} 条来源事件${eventStreamFilterLocked.value ? '（锁定模式）' : ''}`
+      : '未匹配到来源事件，请先刷新事件流',
+  )
 }
 
 function resolveProjectNodeIdFromDecision(item: DecisionQueueViewItem) {
@@ -1123,36 +1282,14 @@ async function focusProjectAgentNode(item: DecisionQueueViewItem) {
     window.clearTimeout(edgeHighlightTimer)
   }
 
+  const edgeIds = getRelatedContractEdgeIds(item, targetNodeId)
   const edgeList = edges.value as Array<{
+    id: string
     class?: string
-    source: string
-    target: string
-    data?: { kind?: string; label?: string }
   }>
-  const relatedHints = item.relatedContracts.map((value) => value.toLowerCase())
 
   for (const edge of edgeList) {
-    const isDependencyEdge = edge.data?.kind === 'data'
-
-    if (!isDependencyEdge) {
-      continue
-    }
-
-    const touchesTargetNode = edge.source === targetNodeId || edge.target === targetNodeId
-    let relatedByHint = false
-
-    if (!touchesTargetNode && relatedHints.length) {
-      const edgeValues = `${edge.source} ${edge.target} ${edge.data?.label || ''}`.toLowerCase()
-
-      for (const hint of relatedHints) {
-        if (hint && edgeValues.includes(hint)) {
-          relatedByHint = true
-          break
-        }
-      }
-    }
-
-    if (touchesTargetNode || relatedByHint) {
+    if (edgeIds.includes(edge.id)) {
       edge.class = 'contract-edge-focus'
     }
   }
@@ -2308,23 +2445,38 @@ function createNodeSubagentDraft(node: InspectorNodeMeta): NodeSubagentDraft {
         <div class="orchestration-event-stream">
           <div class="orchestration-event-header">
             <p class="orchestration-event-title">实时事件流</p>
-            <button
-              v-if="eventStreamFilter"
-              type="button"
-              class="orchestration-clear-filter"
-              @click="clearEventStreamFilter"
-            >
-              清除过滤
-            </button>
+            <div class="orchestration-event-actions">
+              <label class="orchestration-filter-lock">
+                <input v-model="eventStreamFilterLocked" type="checkbox" />
+                <span>锁定过滤</span>
+              </label>
+              <button
+                v-if="eventStreamFilters.length"
+                type="button"
+                class="orchestration-clear-filter"
+                @click="clearEventStreamFilter"
+              >
+                清除过滤
+              </button>
+            </div>
           </div>
-          <p v-if="eventStreamFilter" class="orchestration-filter-hint">
-            filtering by {{ eventStreamFilter.sourceEvent }} · {{ eventStreamFilter.module }}
-          </p>
+          <div v-if="eventStreamFilters.length" class="orchestration-filter-tags">
+            <span
+              v-for="filter in eventStreamFilters"
+              :key="filter.key"
+              class="orchestration-filter-tag"
+              :style="getFilterColorStyle(filter)"
+            >
+              <span>{{ filter.label }}</span>
+              <button type="button" @click="removeEventStreamFilter(filter.key)">x</button>
+            </span>
+          </div>
           <article
             v-for="event in filteredRecentEvents"
             :key="event.id"
             class="orchestration-event-item"
             :class="{ highlighted: highlightedEventIdSet.has(event.id) }"
+            :style="highlightedEventFilterMap[event.id] ? getFilterColorStyle(highlightedEventFilterMap[event.id]) : undefined"
           >
             <header>
               <strong>{{ event.type }}</strong>
@@ -2368,6 +2520,11 @@ function createNodeSubagentDraft(node: InspectorNodeMeta): NodeSubagentDraft {
                 <strong>{{ item.module }}</strong>
                 <p>{{ item.workItemId }} · {{ item.decisionType }} · {{ item.status }}</p>
                 <p>source: {{ item.sourceEvent }}</p>
+                <div class="decision-hit-metrics">
+                  <span>事件命中 {{ getDecisionEventHitCount(item) }}</span>
+                  <span>边命中 {{ getDecisionEdgeHitCount(item) }}</span>
+                  <span v-if="isDecisionInCompareSet(item)" class="decision-compare-badge">当前已加入对比集</span>
+                </div>
               </div>
 
               <div class="decision-queue-secondary-actions">
@@ -3130,6 +3287,24 @@ button.primary {
   gap: 10px;
 }
 
+.orchestration-event-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.orchestration-filter-lock {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.orchestration-filter-lock input {
+  margin: 0;
+}
+
 .orchestration-clear-filter {
   min-height: 30px;
   padding: 0 10px;
@@ -3140,6 +3315,32 @@ button.primary {
   margin: 0;
   font-size: 11px;
   color: var(--text-muted);
+}
+
+.orchestration-filter-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.orchestration-filter-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--decision-filter-color, var(--accent)) 48%, var(--panel-border));
+  background: color-mix(in srgb, var(--decision-filter-color, var(--accent)) 14%, var(--panel-surface));
+  padding: 4px 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.orchestration-filter-tag button {
+  min-height: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 10px;
 }
 
 .orchestration-event-title {
@@ -3171,8 +3372,8 @@ button.primary {
 }
 
 .orchestration-event-item.highlighted {
-  border-color: color-mix(in srgb, var(--accent) 48%, var(--panel-border));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 24%, transparent);
+  border-color: color-mix(in srgb, var(--decision-filter-color, var(--accent)) 56%, var(--panel-border));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--decision-filter-color, var(--accent)) 28%, transparent);
 }
 
 .decision-queue-card {
@@ -3211,6 +3412,30 @@ button.primary {
   margin: 4px 0 0;
   font-size: 12px;
   color: var(--text-secondary);
+}
+
+.decision-hit-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.decision-hit-metrics span {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--panel-border);
+  background: color-mix(in srgb, var(--panel-surface) 82%, transparent);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.decision-hit-metrics .decision-compare-badge {
+  border-color: color-mix(in srgb, var(--accent) 44%, var(--panel-border));
+  background: color-mix(in srgb, var(--accent) 14%, var(--panel-surface));
+  color: var(--text-primary);
 }
 
 .decision-queue-secondary-actions {
