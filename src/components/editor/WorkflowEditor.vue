@@ -107,10 +107,14 @@ interface EventStreamFilter {
 }
 
 interface WorkflowWsEnvelope {
+  event_id?: string
+  ts?: string
   type?: string
+  project?: string
+  metadata_type?: string
+  project_decision_id?: string
   payload?: Record<string, unknown>
   cursor?: number
-  ts?: string
 }
 
 interface DecisionQueueViewItem {
@@ -219,6 +223,10 @@ const workflowWsUrl = ref(import.meta.env.VITE_NANOBOT_WORKFLOW_WS_URL?.trim() |
 const wsConnected = ref(false)
 const wsError = ref('')
 const wsCursor = ref(0)
+const inboundChannel = ref('e2e')
+const inboundSenderId = ref('tester')
+const inboundChatId = ref('core-run-flow')
+const inboundContent = ref('Use the three fixed project agents under test_code to add one simple interface to each module.')
 const eventLog = ref<DashboardEvent[]>([])
 const projectRuntimeMap = ref<Record<string, ProjectAgentRuntime>>({})
 const isDelegatingBatch = ref(false)
@@ -1082,6 +1090,18 @@ function readStringField(payload: Record<string, unknown>, fields: string[]) {
   return ''
 }
 
+function readNumericField(payload: Record<string, unknown>, fields: string[]) {
+  for (const field of fields) {
+    const value = payload[field]
+
+    if (typeof value === 'number') {
+      return value
+    }
+  }
+
+  return undefined
+}
+
 function readObjectField(payload: Record<string, unknown>, fields: string[]) {
   for (const field of fields) {
     const value = payload[field]
@@ -1521,12 +1541,22 @@ function summarizePayload(payload: Record<string, unknown>) {
 }
 
 function handleWorkflowWsEnvelope(envelope: WorkflowWsEnvelope) {
+  console.warn('Handling workflow ws envelope project:', envelope.project)
+  console.warn('Handling workflow ws envelope payload:', envelope.payload)
   const eventType = String(envelope.type || 'workflow.unknown')
   const payload = envelope.payload || {}
   const semanticEventType = readStringField(payload, ['event_type', 'type']) || eventType
   const summary = summarizePayload(payload)
   const projectName = extractProjectNameFromPayload(payload)
   const mappedNodeId = projectName ? findNodeIdByProjectName(projectName) : ''
+
+  // --- fin 式 connected 握手: 提取 latest_cursor ---
+  if (eventType === 'workflow.connected') {
+    const latestCursor = readNumericField(payload, ['latest_cursor'])
+    if (typeof latestCursor === 'number' && latestCursor > wsCursor.value) {
+      wsCursor.value = latestCursor
+    }
+  }
 
   if (typeof envelope.cursor === 'number' && envelope.cursor > wsCursor.value) {
     wsCursor.value = envelope.cursor
@@ -1568,6 +1598,41 @@ function handleWorkflowWsEnvelope(envelope: WorkflowWsEnvelope) {
   }
 
   pushDashboardEvent(mappedNodeId ? 'project' : 'system', projectName || 'workflow', semanticEventType, summary)
+
+  // --- fin 式自动应答: project_agent_decision_request ---
+  if (envelope.metadata_type === 'project_agent_decision_request') {
+    if (envelope.project === 'test_code/module2' || envelope.project === 'test_code/module3') {
+      sendWorkflowInbound('rest', { metadata: { project_decision_id: envelope.project_decision_id } })
+    }
+  }
+}
+
+function sendWorkflowInbound(content: string, extra: Record<string, unknown> = {}) {
+  if (!workflowWs || workflowWs.readyState !== WebSocket.OPEN) {
+    wsError.value = 'WebSocket 未连接，无法发送 inbound 消息'
+    return false
+  }
+  const message: Record<string, unknown> = {
+    type: 'inbound',
+    channel: inboundChannel.value,
+    sender_id: inboundSenderId.value,
+    chat_id: inboundChatId.value,
+    content,
+    ...extra,
+  }
+  workflowWs.send(JSON.stringify(message))
+  pushDashboardEvent('system', 'workflow', 'workflow.inbound.sent', content.slice(0, 80))
+  return true
+}
+
+function handleSendInbound() {
+  if (!inboundContent.value.trim()) {
+    setDocumentMessage('请输入要发送的消息内容')
+    return
+  }
+  sendWorkflowInbound(inboundContent.value)
+  inboundContent.value = ''
+  setDocumentMessage('Inbound 消息已发送')
 }
 
 function disconnectWorkflowWs() {
@@ -1606,6 +1671,8 @@ function connectWorkflowWs() {
   workflowWs.onmessage = (event) => {
     try {
       const envelope = JSON.parse(String(event.data)) as WorkflowWsEnvelope
+      // log envelope
+      // console.warn('Received workflow ws envelope:', envelope)
       handleWorkflowWsEnvelope(envelope)
     } catch {
       pushDashboardEvent('system', 'workflow', 'workflow.raw', String(event.data).slice(0, 180))
@@ -2402,6 +2469,37 @@ function createNodeSubagentDraft(node: InspectorNodeMeta): NodeSubagentDraft {
           <button v-else type="button" @click="disconnectWorkflowWs">断开 WS</button>
         </div>
 
+        <!-- fin 式 inbound 消息发送 -->
+        <div v-if="wsConnected" class="orchestration-inbound-section">
+          <p class="orchestration-inbound-title">Inbound 消息 (仿 fin 函数)</p>
+          <div class="orchestration-inbound-row">
+            <label class="inspiration-field inbound-field-sm">
+              <span>channel</span>
+              <input v-model="inboundChannel" class="inspiration-select" />
+            </label>
+            <label class="inspiration-field inbound-field-sm">
+              <span>sender_id</span>
+              <input v-model="inboundSenderId" class="inspiration-select" />
+            </label>
+            <label class="inspiration-field inbound-field-sm">
+              <span>chat_id</span>
+              <input v-model="inboundChatId" class="inspiration-select" />
+            </label>
+          </div>
+          <label class="inspiration-field">
+            <span>消息内容</span>
+            <div class="orchestration-inbound-ctrl">
+              <textarea
+                v-model="inboundContent"
+                class="inspiration-textarea"
+                rows="2"
+                placeholder="输入要发送的 inbound 内容，例如：为 test_code/module2 添加一个简单接口"
+              />
+              <button type="button" class="primary" @click="handleSendInbound">发送 Inbound</button>
+            </div>
+          </label>
+        </div>
+
         <label class="inspiration-field">
           <span>模块模板 (project|title|path|depends(comma)|hint)</span>
           <textarea
@@ -3196,6 +3294,76 @@ button.primary {
 
 .orchestration-actions button {
   min-height: 40px;
+}
+
+.orchestration-inbound-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  margin-top: 8px;
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel-surface) 64%, transparent);
+}
+
+.orchestration-inbound-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+  text-transform: uppercase;
+}
+
+.orchestration-inbound-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.orchestration-inbound-row .inbound-field-sm {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.orchestration-inbound-row .inbound-field-sm > span {
+  font-size: 10px;
+  color: var(--text-secondary);
+}
+
+.orchestration-inbound-row .inbound-field-sm input {
+  min-height: 28px;
+  font-size: 12px;
+}
+
+.orchestration-inbound-ctrl {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+}
+
+.orchestration-inbound-ctrl textarea {
+  flex: 1;
+}
+
+.orchestration-inbound-ctrl button {
+  white-space: nowrap;
+  min-height: 40px;
+  align-self: stretch;
+}
+
+.inbound-auto-respond {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.inbound-auto-respond input {
+  margin: 0;
 }
 
 .orchestration-strip {
