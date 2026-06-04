@@ -744,6 +744,20 @@ const activeInspirationNode = computed(() => {
   return undefined
 })
 
+const pendingDecisionNodes = computed(() => {
+  const result: WorkflowCanvasNode[] = []
+
+  for (const node of nodes.value) {
+    if (node.type !== 'workflow' || !node.data?.pendingDecisionPayload) {
+      continue
+    }
+
+    result.push(node)
+  }
+
+  return result
+})
+
 const stats = computed(() => {
   let noteCount = 0
 
@@ -829,11 +843,24 @@ function onNodeClick(event: { node: WorkflowCanvasNode }) {
     // }
 
     if (node.data.messageBadge?.hasUnread) {
-      node.data = {
-        ...node.data,
-        messageBadge: {
-          hasUnread: false,
-        },
+      if (node.data.pendingDecisionPayload) {
+        // 已显示 dialog → 隐藏但保留 unread
+        node.data = {
+          ...node.data,
+          pendingDecisionPayload: undefined,
+          pendingDecisionAnswer: undefined,
+          pendingDecisionMetadataType: undefined,
+          pendingDecisionProjectId: undefined,
+        }
+      } else {
+        // 未显示 dialog → 显示
+        node.data = {
+          ...node.data,
+          pendingDecisionPayload: node.data.pendingDecisionPayload || '新任务到达，请确认处理方案',
+          pendingDecisionAnswer: '',
+          pendingDecisionMetadataType: node.data.pendingDecisionMetadataType || 'project_agent_decision_request',
+          pendingDecisionProjectId: node.data.pendingDecisionProjectId || node.id,
+        }
       }
     }
 
@@ -1591,7 +1618,7 @@ function summarizePayload(payload: Record<string, unknown>) {
   return text.length > 140 ? `${text.slice(0, 140)}...` : text
 }
 
-function handleProject(project?: string, metadata_type?: string, project_decision_id?: string) {
+function handleProject(project?: string, metadata_type?: string, project_decision_id?: string, payload?: string) {
   if (project === "test_code/module1" && metadata_type === "project_agent_decision_request") {
     // 先不处理后端bug，module1的decision
     return
@@ -1626,6 +1653,16 @@ function handleProject(project?: string, metadata_type?: string, project_decisio
       },
     }
 
+    if (metadata_type === 'project_agent_decision_request' && project_decision_id) {
+      node.data = {
+        ...node.data,
+        pendingDecisionPayload: '新任务到达，请确认处理方案', // || payload,
+        pendingDecisionAnswer: '',
+        pendingDecisionMetadataType: metadata_type,
+        pendingDecisionProjectId: project || node.id,
+      }
+    }
+
     break
   }
 }
@@ -1643,7 +1680,8 @@ function handleWorkflowWsEnvelope(envelope: WorkflowWsEnvelope) {
 
   console.warn('envelope.project: ', envelope.project)
   if (envelope.project === "test_code/module1" || envelope.project === "test_code/module2" || envelope.project === "test_code/module3") {
-    handleProject(envelope.project || projectName, envelope.metadata_type, envelope.project_decision_id)
+    const _payloadStr = JSON.stringify(envelope.payload || {})
+    handleProject(envelope.project || projectName, envelope.metadata_type, envelope.project_decision_id, envelope.payload)
   }
 
   // --- fin 式 connected 握手: 提取 latest_cursor ---
@@ -1697,12 +1735,43 @@ function handleWorkflowWsEnvelope(envelope: WorkflowWsEnvelope) {
 }
 
 // envelope's field
-function respondDecision(metadata_type: string, project: string, project_decision_id: string) {
+function respondDecision(metadata_type: string, project: string, project_decision_id: string, answer?: string) {
   // --- fin 式自动应答: project_agent_decision_request ---
   if (metadata_type === 'project_agent_decision_request') {
     if (project === 'test_code/module2' || project === 'test_code/module3') {
-      sendWorkflowInbound('rest', { metadata: { project_decision_id: project_decision_id } })
+      const content = answer?.trim() || 'rest'
+      sendWorkflowInbound(content, { metadata: { project_decision_id: project_decision_id } })
     }
+  }
+}
+
+function handleSendDecisionAnswer(nodeId: string, answer: string) {
+  for (const node of nodes.value) {
+    if (node.id !== nodeId || node.type !== 'workflow' || !node.data) {
+      continue
+    }
+
+    const trimmedAnswer = answer.trim() || 'rest'
+    respondDecision(
+      node.data.pendingDecisionMetadataType || 'project_agent_decision_request',
+      node.data.pendingDecisionProjectId || node.id,
+      node.id,
+      trimmedAnswer,
+    )
+
+    // 清除该节点的 unread 徽标和 dialog 状态
+    node.data = {
+      ...node.data,
+      messageBadge: {
+        hasUnread: false,
+      },
+      pendingDecisionPayload: undefined,
+      pendingDecisionAnswer: undefined,
+      pendingDecisionMetadataType: undefined,
+      pendingDecisionProjectId: undefined,
+    }
+
+    break
   }
 }
 
@@ -2485,6 +2554,14 @@ function createNodeSubagentDraft(node: InspectorNodeMeta): NodeSubagentDraft {
     promptSuffix: '',
   }
 }
+
+function getNodeDecisionDialogStyle(node: { position: { x: number; y: number } }) {
+  const vp = viewport.value
+  return {
+    top: `${(node.position.y - 115) * vp.zoom + vp.y}px`,
+    left: `${(node.position.x + 10) * vp.zoom + vp.x}px`,
+  }
+}
 </script>
 
 <template>
@@ -3212,6 +3289,21 @@ function createNodeSubagentDraft(node: InspectorNodeMeta): NodeSubagentDraft {
           <Background :gap="24" :size="1.2" :pattern-color="canvasTone" />
           <MiniMap pannable zoomable :node-color="minimapNodeColor" />
         </VueFlow>
+        <!-- 节点决策问答浮窗 -->
+        <div
+          v-for="node in pendingDecisionNodes"
+          :key="node.id"
+          class="node-decision-dialog"
+          :style="getNodeDecisionDialogStyle(node)"
+        >
+          <p class="decision-dialog-question">{{ node.data?.pendingDecisionPayload }}</p>
+          <input
+            v-model="node.data!.pendingDecisionAnswer"
+            class="inspiration-select"
+            placeholder="press enter to answer"
+            @keydown.enter.prevent="handleSendDecisionAnswer(node.id, node.data?.pendingDecisionAnswer ?? '')"
+          />
+        </div>
       </div>
     </section>
   </main>
@@ -3474,6 +3566,61 @@ button.primary {
 
 .inbound-auto-respond input {
   margin: 0;
+}
+
+.decision-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--accent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--panel-surface));
+}
+
+.node-decision-dialog2 {
+  position: absolute;
+  z-index: 50;
+  width: 280px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--panel-border);
+  border-radius: 18px;
+  background: var(--panel-surface);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+}
+
+.node-decision-dialog {
+  position: absolute;
+  z-index: 50;
+  width: 280px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  border: 0;
+  border-radius: 18px;
+  background: transparent;
+}
+
+
+.node-decision-dialog textarea {
+  min-height: 60px;
+}
+
+.node-decision-dialog button {
+  align-self: flex-end;
+}
+
+.decision-dialog-question {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .orchestration-strip {
@@ -4399,6 +4546,7 @@ button.primary {
 .canvas-frame {
   flex: 1;
   padding: 0 22px 22px;
+  position: relative;
 }
 
 .workflow-canvas {

@@ -39,6 +39,10 @@ export interface WorkflowNodeData {
   note?: string
   contentWidget?: WorkflowNodeContentWidgetData
   messageBadge?: WorkflowNodeMessageBadgeData
+  pendingDecisionPayload?: string
+  pendingDecisionAnswer?: string
+  pendingDecisionMetadataType?: string
+  pendingDecisionProjectId?: string
 }
 
 export interface WorkflowEdgeData {
