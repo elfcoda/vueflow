@@ -38,6 +38,7 @@ import {
   fetchDelegationBatchStatus,
   fetchControlPlaneSnapshot,
   schedulerTick,
+  sendChatMessage,
   setProjectRuntimeAttributes,
   submitDecision,
   updateWorkItemDecisionDegradation,
@@ -250,6 +251,59 @@ const selectedDecisionDegradeMode = ref<DecisionDegradationMode>('wait')
 const expandedDecisionItems = ref<Record<string, boolean>>({})
 const eventStreamFilters = ref<EventStreamFilter[]>([])
 const eventStreamFilterLocked = ref(false)
+const chatOpen = ref(false)
+const chatInput = ref('')
+const chatSending = ref(false)
+const chatMessages = ref<Array<{ role: 'user' | 'assistant'; content: string; ts: string }>>([])
+
+const CHAT_STORAGE_KEY = 'vueflow:chat-history:v1'
+
+function loadChatHistory() {
+  try {
+    const raw = localStorage.getItem(CHAT_STORAGE_KEY)
+    if (raw) {
+      chatMessages.value = JSON.parse(raw)
+    }
+  } catch { /* ignore */ }
+}
+
+function saveChatHistory() {
+  try {
+    localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(chatMessages.value))
+  } catch { /* ignore */ }
+}
+
+loadChatHistory()
+
+async function handleSendChat() {
+  const text = chatInput.value.trim()
+  if (!text || chatSending.value) return
+
+  chatInput.value = ''
+  chatMessages.value.push({ role: 'user', content: text, ts: new Date().toISOString() })
+  saveChatHistory()
+  chatSending.value = true
+
+  try {
+    const res = await sendChatMessage(
+      { content: text },
+      { apiBaseUrl: controlPlaneApiUrl.value, apiKey: controlPlaneApiKey.value },
+    )
+    chatMessages.value.push({ role: 'assistant', content: res.reply, ts: new Date().toISOString() })
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : '请求失败'
+    chatMessages.value.push({ role: 'assistant', content: `Error: ${msg}`, ts: new Date().toISOString() })
+  } finally {
+    chatSending.value = false
+    saveChatHistory()
+  }
+}
+
+function handleRemoveChatHistory() {
+  chatMessages.value = []
+  localStorage.removeItem(CHAT_STORAGE_KEY)
+}
+
 let nodeHighlightTimer: number | null = null
 let edgeHighlightTimer: number | null = null
 let workflowWs: WebSocket | null = null
@@ -3253,6 +3307,7 @@ function getNodeDecisionDialogStyle(node: { position: { x: number; y: number } }
           <button type="button" @click="handleExportDocument">导出 JSON</button>
           <button type="button" @click="handleExportGraphDocument">导出节点边 JSON</button>
           <button type="button" @click="handleSendGraphToBackend">发送到 Python</button>
+          <button type="button" @click="handleRemoveChatHistory">移除聊天记录</button>
           <input
             ref="importInput"
             type="file"
@@ -3303,6 +3358,42 @@ function getNodeDecisionDialogStyle(node: { position: { x: number; y: number } }
             placeholder="press enter to answer"
             @keydown.enter.prevent="handleSendDecisionAnswer(node.id, node.data?.pendingDecisionAnswer ?? '')"
           />
+        </div>
+      </div>
+
+      <!-- 聊天对话框 -->
+      <div class="chat-panel" :class="{ open: chatOpen }">
+        <button type="button" class="chat-toggle" @click="chatOpen = !chatOpen">
+          {{ chatOpen ? '×' : '💬' }}
+        </button>
+        <div v-if="chatOpen" class="chat-body">
+          <div class="chat-messages" ref="chatMessagesRef">
+            <div
+              v-for="(msg, index) in chatMessages"
+              :key="index"
+              class="chat-message"
+              :class="msg.role"
+            >
+              <div class="chat-bubble">{{ msg.content }}</div>
+            </div>
+          </div>
+          <div class="chat-input-row">
+            <input
+              v-model="chatInput"
+              class="chat-input"
+              placeholder="输入消息..."
+              :disabled="chatSending"
+              @keydown.enter.prevent="handleSendChat"
+            />
+            <button
+              type="button"
+              class="chat-send-btn"
+              :disabled="chatSending || !chatInput.trim()"
+              @click="handleSendChat"
+            >
+              {{ chatSending ? '...' : '发送' }}
+            </button>
+          </div>
         </div>
       </div>
     </section>
@@ -3621,6 +3712,129 @@ button.primary {
   color: var(--text-primary);
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* 聊天对话框 */
+.chat-panel {
+  position: fixed;
+  bottom: 34px;
+  left: 350px;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.chat-toggle {
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  border: 1px solid var(--panel-border);
+  background: var(--panel-surface);
+  font-size: 20px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+}
+
+.chat-toggle:hover {
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel-surface));
+}
+
+.chat-body {
+  position: absolute;
+  bottom: 52px;
+  left: 0;
+  width: 360px;
+  max-height: 480px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--panel-border);
+  border-radius: 18px;
+  background: var(--panel-surface);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.18);
+  overflow: hidden;
+}
+
+.chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 380px;
+}
+
+.chat-message {
+  display: flex;
+}
+
+.chat-message.user {
+  justify-content: flex-end;
+}
+
+.chat-message.assistant {
+  justify-content: flex-start;
+}
+
+.chat-bubble {
+  max-width: 80%;
+  padding: 10px 14px;
+  border-radius: 16px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.chat-message.user .chat-bubble {
+  background: var(--accent);
+  color: #fff;
+  border-bottom-right-radius: 4px;
+}
+
+.chat-message.assistant .chat-bubble {
+  background: color-mix(in srgb, var(--panel-border) 32%, transparent);
+  border-bottom-left-radius: 4px;
+}
+
+.chat-input-row {
+  display: flex;
+  gap: 6px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--panel-border);
+}
+
+.chat-input {
+  flex: 1;
+  min-height: 40px;
+  padding: 0 14px;
+  border-radius: 12px;
+  border: 1px solid var(--panel-border);
+  background: color-mix(in srgb, var(--panel-surface) 88%, transparent);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+}
+
+.chat-send-btn {
+  min-height: 40px;
+  padding: 0 16px;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  background: var(--accent);
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.chat-send-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .orchestration-strip {

@@ -270,3 +270,27 @@ export async function getProjectRuntimeAttributes(
   await throwOnHttpError(response)
   return response.json() as Promise<ProjectAttributesResponse>
 }
+
+export interface ChatMessagePayload {
+  content: string
+  session_id?: string
+}
+
+export interface ChatMessageResponse {
+  ok: boolean
+  reply: string
+}
+
+export async function sendChatMessage(
+  payload: ChatMessagePayload,
+  options?: ControlPlaneClientOptions,
+): Promise<ChatMessageResponse> {
+  const response = await fetch(`${normalizeApiBaseUrl(options?.apiBaseUrl)}/chat`, {
+    method: 'POST',
+    headers: buildHeaders(options?.apiKey, true),
+    body: JSON.stringify(payload),
+  })
+
+  await throwOnHttpError(response)
+  return response.json() as Promise<ChatMessageResponse>
+}
