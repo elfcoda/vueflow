@@ -818,6 +818,27 @@ function onConnect(connection: Connection) {
 
 function onNodeClick(event: { node: WorkflowCanvasNode }) {
   selectedNodeId.value = event.node.id
+
+  for (const node of nodes.value) {
+    if (node.id !== event.node.id || node.type !== 'workflow' || !node.data) {
+      continue
+    }
+
+    // if (node.class === 'agent-focus-flash') {
+    //   node.class = ''
+    // }
+
+    if (node.data.messageBadge?.hasUnread) {
+      node.data = {
+        ...node.data,
+        messageBadge: {
+          hasUnread: false,
+        },
+      }
+    }
+
+    break
+  }
 }
 
 function clearSelection() {
@@ -857,6 +878,36 @@ function handleDraftTextInput(field: 'objective' | 'scopePaths' | 'entryHints', 
 
 function handleDraftProjectNameInput(event: Event) {
   updateSelectedDraft('projectName', (event.target as HTMLInputElement | null)?.value ?? '')
+}
+
+function handleNodeTitleInput(event: Event) {
+  console.warn('updating title')
+  const value = (event.target as HTMLInputElement | null)?.value ?? ''
+  updateSelectedNodeField('title', value)
+}
+
+function handleNodeSubtitleInput(event: Event) {
+  console.warn('updating subtitle')
+  const value = (event.target as HTMLInputElement | null)?.value ?? ''
+  updateSelectedNodeField('subtitle', value)
+}
+
+function updateSelectedNodeField<K extends keyof WorkflowNodeData>(field: K, value: WorkflowNodeData[K]) {
+  const nodeId = selectedNodeId.value
+  if (!nodeId) return
+
+  for (const node of nodes.value) {
+    if (node.id !== nodeId || node.type !== 'workflow' || !node.data) {
+      continue
+    }
+
+    node.data = {
+      ...node.data,
+      [field]: value,
+    }
+
+    break
+  }
 }
 
 function handleDraftPromptSuffixInput(event: Event) {
@@ -1540,15 +1591,60 @@ function summarizePayload(payload: Record<string, unknown>) {
   return text.length > 140 ? `${text.slice(0, 140)}...` : text
 }
 
+function handleProject(project?: string, metadata_type?: string) {
+  if (project === "test_code/module1" && metadata_type === "project_agent_decision_request") {
+    // 先不处理后端bug，module1的decision
+    return
+  }
+
+  // 先按title查找做demo，虽然可能不唯一.但是目前目录应该是唯一的
+  const normalizedProject = project?.trim().toLowerCase()
+  
+  if (!normalizedProject) {
+    return
+  }
+
+  for (const node of nodes.value) {
+    // node.id
+    if (node.type !== 'workflow' || !node.data) {
+      continue
+    }
+
+    const candidateTitle = node.data?.title.trim().toLowerCase()
+    const isMatched = candidateTitle === normalizedProject
+      || candidateTitle.includes(normalizedProject)
+
+    if (!isMatched) {
+      continue
+    }
+
+    // node.class = 'agent-focus-flash'
+    node.data = {
+      ...node.data,
+      messageBadge: {
+        hasUnread: true,
+      },
+    }
+
+    break
+  }
+}
+
 function handleWorkflowWsEnvelope(envelope: WorkflowWsEnvelope) {
   console.warn('Handling workflow ws envelope project:', envelope.project)
   console.warn('Handling workflow ws envelope payload:', envelope.payload)
+
   const eventType = String(envelope.type || 'workflow.unknown')
   const payload = envelope.payload || {}
   const semanticEventType = readStringField(payload, ['event_type', 'type']) || eventType
   const summary = summarizePayload(payload)
   const projectName = extractProjectNameFromPayload(payload)
   const mappedNodeId = projectName ? findNodeIdByProjectName(projectName) : ''
+
+  console.warn('envelope.project: ', envelope.project)
+  if (envelope.project === "test_code/module1" || envelope.project === "test_code/module2" || envelope.project === "test_code/module3") {
+    handleProject(envelope.project || projectName, envelope.metadata_type)
+  }
 
   // --- fin 式 connected 握手: 提取 latest_cursor ---
   if (eventType === 'workflow.connected') {
@@ -1600,11 +1696,11 @@ function handleWorkflowWsEnvelope(envelope: WorkflowWsEnvelope) {
   pushDashboardEvent(mappedNodeId ? 'project' : 'system', projectName || 'workflow', semanticEventType, summary)
 
   // --- fin 式自动应答: project_agent_decision_request ---
-  if (envelope.metadata_type === 'project_agent_decision_request') {
-    if (envelope.project === 'test_code/module2' || envelope.project === 'test_code/module3') {
-      sendWorkflowInbound('rest', { metadata: { project_decision_id: envelope.project_decision_id } })
-    }
-  }
+  // if (envelope.metadata_type === 'project_agent_decision_request') {
+  //   if (envelope.project === 'test_code/module2' || envelope.project === 'test_code/module3') {
+  //     sendWorkflowInbound('rest', { metadata: { project_decision_id: envelope.project_decision_id } })
+  //   }
+  // }
 }
 
 function sendWorkflowInbound(content: string, extra: Record<string, unknown> = {}) {
@@ -2838,7 +2934,12 @@ function createNodeSubagentDraft(node: InspectorNodeMeta): NodeSubagentDraft {
         <div class="inspector-card-header">
           <div>
             <p class="inspector-eyebrow">{{ selectedNodeTypeLabel }}</p>
-            <strong>{{ selectedNodeData.title }}</strong>
+            <input
+              class="inspector-textarea inspector-input inspector-title-input"
+              :value="selectedNodeData.title"
+              placeholder="节点标题"
+              @input="handleNodeTitleInput($event)"
+            />
           </div>
 
           <div class="inspector-tabs" role="tablist" aria-label="Node inspector tabs">
@@ -2862,7 +2963,12 @@ function createNodeSubagentDraft(node: InspectorNodeMeta): NodeSubagentDraft {
         </div>
 
         <div v-if="inspectorTab === 'overview'" class="inspector-panel">
-          <span>{{ selectedNodeData.subtitle }}</span>
+          <input
+            class="inspector-textarea inspector-input"
+            :value="selectedNodeData.subtitle"
+            placeholder="副标题"
+            @input="handleNodeSubtitleInput($event)"
+          />
           <p>
             {{ selectedNodeData.hint ?? '拖拽节点、创建连线，或用左侧按钮快速扩展流程。' }}
           </p>
