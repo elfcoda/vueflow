@@ -1591,7 +1591,7 @@ function summarizePayload(payload: Record<string, unknown>) {
   return text.length > 140 ? `${text.slice(0, 140)}...` : text
 }
 
-function handleProject(project?: string, metadata_type?: string) {
+function handleProject(project?: string, metadata_type?: string, project_decision_id?: string) {
   if (project === "test_code/module1" && metadata_type === "project_agent_decision_request") {
     // 先不处理后端bug，module1的decision
     return
@@ -1643,7 +1643,7 @@ function handleWorkflowWsEnvelope(envelope: WorkflowWsEnvelope) {
 
   console.warn('envelope.project: ', envelope.project)
   if (envelope.project === "test_code/module1" || envelope.project === "test_code/module2" || envelope.project === "test_code/module3") {
-    handleProject(envelope.project || projectName, envelope.metadata_type)
+    handleProject(envelope.project || projectName, envelope.metadata_type, envelope.project_decision_id)
   }
 
   // --- fin 式 connected 握手: 提取 latest_cursor ---
@@ -1694,14 +1694,18 @@ function handleWorkflowWsEnvelope(envelope: WorkflowWsEnvelope) {
   }
 
   pushDashboardEvent(mappedNodeId ? 'project' : 'system', projectName || 'workflow', semanticEventType, summary)
-
-  // --- fin 式自动应答: project_agent_decision_request ---
-  // if (envelope.metadata_type === 'project_agent_decision_request') {
-  //   if (envelope.project === 'test_code/module2' || envelope.project === 'test_code/module3') {
-  //     sendWorkflowInbound('rest', { metadata: { project_decision_id: envelope.project_decision_id } })
-  //   }
-  // }
 }
+
+// envelope's field
+function respondDecision(metadata_type: string, project: string, project_decision_id: string) {
+  // --- fin 式自动应答: project_agent_decision_request ---
+  if (metadata_type === 'project_agent_decision_request') {
+    if (project === 'test_code/module2' || project === 'test_code/module3') {
+      sendWorkflowInbound('rest', { metadata: { project_decision_id: project_decision_id } })
+    }
+  }
+}
+
 
 function sendWorkflowInbound(content: string, extra: Record<string, unknown> = {}) {
   if (!workflowWs || workflowWs.readyState !== WebSocket.OPEN) {
