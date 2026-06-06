@@ -304,6 +304,42 @@ function handleRemoveChatHistory() {
   localStorage.removeItem(CHAT_STORAGE_KEY)
 }
 
+function handleEdgeFlowAnimation(edgeId?: string) {
+  // 如果没有指定 edgeId, 取第一个 workflow 类型边
+  const targetId = edgeId || (edges.value.length > 0 ? edges.value[0].id : '')
+  console.warn('Animating flow on edgeId: ', targetId)
+  if (!targetId) return
+  console.warn('Animating flow length: ', edges.value.length)
+  console.warn('Animating flow on edge: ', edges.value[0].source, edges.value[0].target, edges.value[0].id)
+  
+
+  for (const edge of edges.value) {
+    if (edge.id !== targetId) continue
+
+    const currentFlow = (edge.data as Record<string, unknown>)?.flow === true
+
+    edge.data = {
+      ...edge.data,
+      flow: !currentFlow,
+    } as any
+
+    console.warn('Edge data after toggle: ', edge.data)
+    // 5 秒后自动关闭
+    if (!currentFlow) {
+      window.setTimeout(() => {
+        for (const e of edges.value) {
+          if (e.id === targetId) {
+            e.data = { ...e.data, flow: false } as any
+            break
+          }
+        }
+      }, 60000)
+    }
+
+    break
+  }
+}
+
 let nodeHighlightTimer: number | null = null
 let edgeHighlightTimer: number | null = null
 let workflowWs: WebSocket | null = null
@@ -1672,7 +1708,7 @@ function summarizePayload(payload: Record<string, unknown>) {
   return text.length > 140 ? `${text.slice(0, 140)}...` : text
 }
 
-function handleProject(project?: string, metadata_type?: string, project_decision_id?: string, payload?: string) {
+function handleProject(project?: string, metadata_type?: string, project_decision_id?: string) {
   if (project === "test_code/module1" && metadata_type === "project_agent_decision_request") {
     // 先不处理后端bug，module1的decision
     return
@@ -1734,8 +1770,7 @@ function handleWorkflowWsEnvelope(envelope: WorkflowWsEnvelope) {
 
   console.warn('envelope.project: ', envelope.project)
   if (envelope.project === "test_code/module1" || envelope.project === "test_code/module2" || envelope.project === "test_code/module3") {
-    const _payloadStr = JSON.stringify(envelope.payload || {})
-    handleProject(envelope.project || projectName, envelope.metadata_type, envelope.project_decision_id, envelope.payload)
+    handleProject(envelope.project || projectName, envelope.metadata_type, envelope.project_decision_id)
   }
 
   // --- fin 式 connected 握手: 提取 latest_cursor ---
@@ -3307,6 +3342,7 @@ function getNodeDecisionDialogStyle(node: { position: { x: number; y: number } }
           <button type="button" @click="handleExportDocument">导出 JSON</button>
           <button type="button" @click="handleExportGraphDocument">导出节点边 JSON</button>
           <button type="button" @click="handleSendGraphToBackend">发送到 Python</button>
+          <button type="button" @click="handleEdgeFlowAnimation()">边流动</button>
           <button type="button" @click="handleRemoveChatHistory">移除聊天记录</button>
           <input
             ref="importInput"

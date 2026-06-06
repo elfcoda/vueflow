@@ -48,4 +48,5 @@ export interface WorkflowNodeData {
 export interface WorkflowEdgeData {
   kind: 'main' | 'data'
   label: string
+  flow?: boolean
 }

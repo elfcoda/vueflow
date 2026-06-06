@@ -35,8 +35,29 @@ const isDataEdge = computed(() => props.data?.kind === 'data')
 
 const edgeClass = computed(() => [
   'workflow-edge',
-  { selected: props.selected, data: isDataEdge.value, hovered: hovered.value },
+  {
+    selected: props.selected,
+    data: isDataEdge.value,
+    hovered: hovered.value,
+  },
 ])
+
+const edgeStyle = computed(() => {
+  if (props.data?.flow) {
+    return {
+      stroke: '#ff0073',
+      strokeWidth: 2,
+      strokeDasharray: '5, 5',
+      strokeDashoffset: 0,
+      animation: 'dashdraw 0.5s linear infinite',
+    }
+  }
+
+  return {
+    strokeDasharray: isDataEdge.value ? '6 6' : 'none',
+    strokeWidth: 2,
+  }
+})
 
 const labelClass = computed(() => [
   'edge-label',
@@ -63,7 +84,8 @@ function handleMouseLeave() {
     :id="id"
     :path="edgePath[0]"
     :class="edgeClass"
-    :style="{ strokeDasharray: isDataEdge ? '6 6' : 'none' }"
+    :style="edgeStyle"
+    :animated="props.data?.flow === true"
     :marker-end="markerEnd ?? MarkerType.ArrowClosed"
     :interaction-width="40"
     @mouseenter="handleMouseEnter"
@@ -159,5 +181,15 @@ function handleMouseLeave() {
 .edge-label.selected .edge-remove {
   border-color: color-mix(in srgb, var(--accent) 34%, var(--panel-border));
   color: var(--accent);
+}
+
+/* 流动动效 */
+@keyframes edge-flow {
+  0% {
+    stroke-dashoffset: 0;
+  }
+  100% {
+    stroke-dashoffset: -20;
+  }
 }
 </style>
