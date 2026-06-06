@@ -1735,15 +1735,15 @@ function handleProject(project?: string, metadata_type?: string, project_decisio
       continue
     }
 
-    // node.class = 'agent-focus-flash'
-    node.data = {
-      ...node.data,
-      messageBadge: {
-        hasUnread: true,
-      },
-    }
-
     if (metadata_type === 'project_agent_decision_request' && project_decision_id) {
+      // node.class = 'agent-focus-flash'
+      node.data = {
+        ...node.data,
+        messageBadge: {
+          hasUnread: true,
+        },
+      }
+
       node.data = {
         ...node.data,
         pendingDecisionPayload: '新任务到达，请确认处理方案', // || payload,
