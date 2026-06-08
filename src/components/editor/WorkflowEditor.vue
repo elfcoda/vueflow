@@ -389,7 +389,7 @@ onUnmounted(() => {
 })
 
 const workflowNodes = computed<WorkflowCanvasNode[]>(() => {
-  const result: WorkflowCanvasNode[] = []
+  let result: WorkflowCanvasNode[] = []
 
   for (const node of nodes.value) {
     if (node.type === 'workflow') {
@@ -1708,7 +1708,7 @@ function summarizePayload(payload: Record<string, unknown>) {
   return text.length > 140 ? `${text.slice(0, 140)}...` : text
 }
 
-function handleProject(project?: string, metadata_type?: string, project_decision_id?: string) {
+function handleProject(project?: string, metadata_type?: string, project_decision_id?: string, payload?: string) {
   if (project === "test_code/module1" && metadata_type === "project_agent_decision_request") {
     // 先不处理后端bug，module1的decision
     return
@@ -1746,7 +1746,7 @@ function handleProject(project?: string, metadata_type?: string, project_decisio
 
       node.data = {
         ...node.data,
-        pendingDecisionPayload: '新任务到达，请确认处理方案', // || payload,
+        pendingDecisionPayload: payload || '新任务到达，请确认处理方案',
         pendingDecisionAnswer: '',
         pendingDecisionMetadataType: metadata_type,
         pendingDecisionProjectId: project || node.id,
@@ -1760,6 +1760,17 @@ function handleProject(project?: string, metadata_type?: string, project_decisio
 function handleWorkflowWsEnvelope(envelope: WorkflowWsEnvelope) {
   console.warn('Handling workflow ws envelope project:', envelope.project)
   console.warn('Handling workflow ws envelope payload:', envelope.payload)
+  // {content: '[Project Scope: test_code/module3]\nDecision required: Choose the module3 interface style.'}
+  const content = String(envelope.payload?.content ?? '');
+  console.warn('content is ', content)
+  const lines = content.split('\n');
+  let question = '';
+  if (lines.length < 2) {
+    question = 'error'
+  } else {
+    const colonIndex = lines[1].search(/[：:]/);
+    question = lines[1].substring(colonIndex + 1).trim()
+  }
 
   const eventType = String(envelope.type || 'workflow.unknown')
   const payload = envelope.payload || {}
@@ -1770,7 +1781,7 @@ function handleWorkflowWsEnvelope(envelope: WorkflowWsEnvelope) {
 
   console.warn('envelope.project: ', envelope.project)
   if (envelope.project === "test_code/module1" || envelope.project === "test_code/module2" || envelope.project === "test_code/module3") {
-    handleProject(envelope.project || projectName, envelope.metadata_type, envelope.project_decision_id)
+    handleProject(envelope.project || projectName, envelope.metadata_type, envelope.project_decision_id, question)
   }
 
   // --- fin 式 connected 握手: 提取 latest_cursor ---
