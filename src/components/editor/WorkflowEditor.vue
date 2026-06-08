@@ -19,6 +19,7 @@ import WorkflowNode from './nodes/WorkflowNode.vue'
 import {
   isWorkflowDocumentData,
   type WorkflowCanvasNode,
+  type WorkflowCanvasEdge,
   type WorkflowDocumentData,
 } from './document'
 import {
@@ -255,6 +256,7 @@ const chatOpen = ref(false)
 const chatInput = ref('')
 const chatSending = ref(false)
 const chatMessages = ref<Array<{ role: 'user' | 'assistant'; content: string; ts: string }>>([])
+const chatMessagesRef = ref<HTMLDivElement | null>(null)
 
 const CHAT_STORAGE_KEY = 'vueflow:chat-history:v1'
 
@@ -273,35 +275,60 @@ function saveChatHistory() {
   } catch { /* ignore */ }
 }
 
+function scrollChatToBottom() {
+  nextTick(() => {
+    const el = chatMessagesRef.value
+    if (el) {
+      el.scrollTop = el.scrollHeight
+    }
+  })
+}
+
 loadChatHistory()
+nextTick(() => scrollChatToBottom())
 
 async function handleSendChat() {
   const text = chatInput.value.trim()
   if (!text || chatSending.value) return
 
   chatInput.value = ''
-  chatMessages.value.push({ role: 'user', content: text, ts: new Date().toISOString() })
-  saveChatHistory()
   chatSending.value = true
 
-  try {
-    const res = await sendChatMessage(
-      { content: text },
-      { apiBaseUrl: controlPlaneApiUrl.value, apiKey: controlPlaneApiKey.value },
-    )
-    chatMessages.value.push({ role: 'assistant', content: res.reply, ts: new Date().toISOString() })
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : '请求失败'
-    chatMessages.value.push({ role: 'assistant', content: `Error: ${msg}`, ts: new Date().toISOString() })
-  } finally {
-    chatSending.value = false
+  const ok = sendWorkflowInbound(text)
+  if (!ok) {
+    chatMessages.value.push({
+      role: 'assistant',
+      content: 'Error: WebSocket 未连接，无法发送消息',
+      ts: new Date().toISOString(),
+    })
+    scrollChatToBottom()
     saveChatHistory()
   }
+
+  chatSending.value = false
 }
 
 function handleRemoveChatHistory() {
   chatMessages.value = []
   localStorage.removeItem(CHAT_STORAGE_KEY)
+}
+
+function findNodeIdByNodeName(name: string): string | undefined {
+  for (const node of nodes.value) {
+    if (node.data?.title === name) {
+      return node.id
+    }
+  }
+  return undefined
+}
+
+function findEdgeIdBySourceIdAndTargetId(sourceId: string, targetId: string): string | undefined {
+  for (const edge of edges.value) {
+    if (edge.source === sourceId && edge.target === targetId) {
+      return edge.id
+    }
+  }
+  return undefined
 }
 
 function handleEdgeFlowAnimation(edgeId?: string) {
@@ -1766,6 +1793,7 @@ function handleWorkflowWsEnvelope(envelope: WorkflowWsEnvelope) {
       content,
       ts: new Date().toISOString(),
     })
+    scrollChatToBottom()
     saveChatHistory()
   }
 
@@ -1898,6 +1926,15 @@ function sendWorkflowInbound(content: string, extra: Record<string, unknown> = {
     ...extra,
   }
   workflowWs.send(JSON.stringify(message))
+  // 将 outbound 消息内容加到聊天窗口右侧作为 user 消息
+  chatMessages.value.push({
+    role: 'user',
+    content,
+    ts: new Date().toISOString(),
+  })
+  scrollChatToBottom()
+  saveChatHistory()
+
   pushDashboardEvent('system', 'workflow', 'workflow.inbound.sent', content.slice(0, 80))
   return true
 }
@@ -1948,11 +1985,62 @@ function connectWorkflowWs() {
   workflowWs.onmessage = (event) => {
     try {
       const envelope = JSON.parse(String(event.data)) as WorkflowWsEnvelope
-      // log envelope
-      // console.warn('Received workflow ws envelope:', envelope)
-      handleWorkflowWsEnvelope(envelope)
+
+      // workflow.status.push: payload 直接是状态对象
+      if (envelope.type === 'workflow.status.push' && envelope.payload) {
+        updateEdgeStatus(envelope)
+      } else {
+        // log envelope
+        // console.warn('Received workflow ws envelope:', envelope)
+        handleWorkflowWsEnvelope(envelope)
+      }
     } catch {
       pushDashboardEvent('system', 'workflow', 'workflow.raw', String(event.data).slice(0, 180))
+    }
+  }
+
+  function updateEdgeStatus(envelope: WorkflowWsEnvelope) {
+    if (!envelope.payload) {
+      return
+    }
+    const status = envelope.payload
+    console.warn('type of projects: ', typeof(status.projects))
+    console.warn('Received workflow status push:', status.projects)
+    let edgeIdsList: string[] = []
+    // travel projects's dict and log out
+    if (status.projects && typeof status.projects === 'object') {
+      for (const [projectName, projectStatusCount] of Object.entries(status.projects)) {
+        // console.warn(`Project: ${projectName}, Status: ${JSON.stringify(projectStatusCount)}`)
+        console.warn(`title: ${projectName}, count: ${projectStatusCount}`)
+        if (projectStatusCount === 0) {
+          continue
+        }
+
+        const sourceId = 'core-agent'
+        const targetId = findNodeIdByNodeName(projectName)
+        if (!targetId) {
+          console.warn(`No node found for project: ${projectName}`)
+          continue
+        }
+        const edgeId = findEdgeIdBySourceIdAndTargetId(sourceId, targetId)
+        if (edgeId) {
+          console.warn(`Edge found: ${edgeId}`)
+          edgeIdsList.push(edgeId)
+        }
+      }
+    }
+    renderLatestEdges(edgeIdsList)
+    // pushDashboardEvent('system', 'workflow', 'workflow.status.push', status.projects)
+  }
+
+  function renderLatestEdges(edgeIdsList: string[]) {
+    const activeSet = new Set(edgeIdsList)
+    for (const edge of edges.value) {
+      const isActive = activeSet.has(edge.id)
+      const currentFlow = (edge.data as Record<string, unknown>)?.flow === true
+      if (currentFlow !== isActive) {
+        edge.data = { ...edge.data, flow: isActive } as any
+      }
     }
   }
 

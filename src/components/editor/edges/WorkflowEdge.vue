@@ -45,8 +45,8 @@ const edgeClass = computed(() => [
 const edgeStyle = computed(() => {
   if (props.data?.flow) {
     return {
-      stroke: '#ff0073',
-      strokeWidth: 2,
+      stroke: '#6fe508f0', // '#ff0073',
+      strokeWidth: 3,
       strokeDasharray: '5, 5',
       strokeDashoffset: 0,
       animation: 'dashdraw 0.5s linear infinite',
