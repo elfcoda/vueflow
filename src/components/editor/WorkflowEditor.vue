@@ -838,7 +838,7 @@ const pendingDecisionNodes = computed(() => {
   const result: WorkflowCanvasNode[] = []
 
   for (const node of nodes.value) {
-    if (node.type !== 'workflow' || !node.data?.pendingDecisionPayload) {
+    if (node.type !== 'workflow' || !node.data?.dialogVisible || !node.data?.pendingDecisionPayload) {
       continue
     }
 
@@ -933,23 +933,18 @@ function onNodeClick(event: { node: WorkflowCanvasNode }) {
     // }
 
     if (node.data.messageBadge?.hasUnread) {
-      if (node.data.pendingDecisionPayload) {
+      if (node.data.dialogVisible) {
         // 已显示 dialog → 隐藏但保留 unread
         node.data = {
           ...node.data,
-          pendingDecisionPayload: undefined,
-          pendingDecisionAnswer: undefined,
-          pendingDecisionMetadataType: undefined,
-          pendingDecisionProjectId: undefined,
+          dialogVisible: false,
         }
       } else {
         // 未显示 dialog → 显示
         node.data = {
           ...node.data,
-          pendingDecisionPayload: node.data.pendingDecisionPayload || '新任务到达，请确认处理方案',
+          dialogVisible: true,
           pendingDecisionAnswer: '',
-          pendingDecisionMetadataType: node.data.pendingDecisionMetadataType || 'project_agent_decision_request',
-          pendingDecisionProjectId: node.data.pendingDecisionProjectId || node.id,
         }
       }
     }
@@ -1750,6 +1745,7 @@ function handleProject(project?: string, metadata_type?: string, project_decisio
         pendingDecisionAnswer: '',
         pendingDecisionMetadataType: metadata_type,
         pendingDecisionProjectId: project || node.id,
+        pendingDecisionId: project_decision_id,
       }
     }
 
@@ -1854,8 +1850,8 @@ function handleSendDecisionAnswer(nodeId: string, answer: string) {
     const trimmedAnswer = answer.trim() || 'rest'
     respondDecision(
       node.data.pendingDecisionMetadataType || 'project_agent_decision_request',
-      node.data.pendingDecisionProjectId || node.id,
-      node.id,
+      node.data.pendingDecisionProjectId || '',
+      node.data.pendingDecisionId || '',
       trimmedAnswer,
     )
 
@@ -1869,6 +1865,8 @@ function handleSendDecisionAnswer(nodeId: string, answer: string) {
       pendingDecisionAnswer: undefined,
       pendingDecisionMetadataType: undefined,
       pendingDecisionProjectId: undefined,
+      pendingDecisionId: undefined,
+      dialogVisible: false,
     }
 
     break

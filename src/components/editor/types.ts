@@ -43,6 +43,8 @@ export interface WorkflowNodeData {
   pendingDecisionAnswer?: string
   pendingDecisionMetadataType?: string
   pendingDecisionProjectId?: string
+  pendingDecisionId?: string
+  dialogVisible?: boolean
 }
 
 export interface WorkflowEdgeData {
