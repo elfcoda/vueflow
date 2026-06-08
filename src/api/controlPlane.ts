@@ -181,6 +181,8 @@ export async function setProjectRuntimeAttributes(
   attributes: Record<string, unknown>,
   options?: ControlPlaneClientOptions,
 ): Promise<ProjectAttributesResponse> {
+  // 把project里的/替换成_
+  project = project.replace(/\//g, '_')
   const encodedProject = encodeURIComponent(project)
   const response = await fetch(
     `${normalizeApiBaseUrl(options?.apiBaseUrl)}/projects/${encodedProject}/attributes`,
@@ -191,6 +193,7 @@ export async function setProjectRuntimeAttributes(
     },
   )
 
+  console.warn('Response from setProjectRuntimeAttributes:', response)
   await throwOnHttpError(response)
   return response.json() as Promise<ProjectAttributesResponse>
 }

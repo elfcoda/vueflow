@@ -11,6 +11,7 @@ import {
 } from '../nodeAttachmentCatalog'
 import { useNodeAttachmentDrag } from '../useNodeAttachmentDrag'
 import { useWorkflowDocumentStore } from '../../../stores/workflowDocument.store'
+import { setProjectRuntimeAttributes } from '../../../api/controlPlane'
 
 const props = defineProps<NodeProps<WorkflowNodeData>>()
 const workflowDocumentStore = useWorkflowDocumentStore()
@@ -96,6 +97,16 @@ function handleDrop(event: DragEvent) {
   event.stopPropagation()
   workflowDocumentStore.applyNodeAttachment(props.id, payload)
   clearNodeAttachmentDrag()
+
+  // 将 attachment 同步到后端，以节点 title 作为 project 名称
+  const projectName = props.data.title
+  const attributes: Record<string, unknown> = {
+    attachment_kind: payload.kind,
+    attachment_option_id: payload.optionId,
+  }
+  setProjectRuntimeAttributes(projectName, attributes).catch((err) => {
+    console.warn('Failed to push attachment attributes to backend:', err)
+  })
 }
 
 function createAttachmentEntries(attachments?: WorkflowNodeAttachments) {
