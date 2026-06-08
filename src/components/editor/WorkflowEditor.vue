@@ -1759,6 +1759,16 @@ function handleWorkflowWsEnvelope(envelope: WorkflowWsEnvelope) {
   // {content: '[Project Scope: test_code/module3]\nDecision required: Choose the module3 interface style.'}
   const content = String(envelope.payload?.content ?? '');
   console.warn('content is ', content)
+  // 将 WS 消息内容输出到聊天窗口作为 assistant 回答
+  if (content) {
+    chatMessages.value.push({
+      role: 'assistant',
+      content,
+      ts: new Date().toISOString(),
+    })
+    saveChatHistory()
+  }
+
   const lines = content.split('\n');
   let question = '';
   if (lines.length < 2) {
