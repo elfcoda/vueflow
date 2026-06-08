@@ -32,6 +32,7 @@ import {
 } from './nodeAttachmentCatalog'
 import { useNodeAttachmentDrag } from './useNodeAttachmentDrag'
 import type { WorkflowNodeData } from './types'
+import { on as eventOn } from '../../api/eventBus'
 import { sendWorkflowGraphToBackend } from '../../api/workflowGraph'
 import {
   delegateProjectsBatch,
@@ -286,6 +287,17 @@ function scrollChatToBottom() {
 
 loadChatHistory()
 nextTick(() => scrollChatToBottom())
+
+// 监听来自 API 层的 inform 消息，加入聊天面板
+eventOn('chat:inform', (msg) => {
+  chatMessages.value.push({
+    role: 'assistant',
+    content: msg as string,
+    ts: new Date().toISOString(),
+  })
+  scrollChatToBottom()
+  saveChatHistory()
+})
 
 async function handleSendChat() {
   const text = chatInput.value.trim()

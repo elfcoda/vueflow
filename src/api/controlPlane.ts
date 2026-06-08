@@ -1,3 +1,5 @@
+import { emit } from './eventBus'
+
 export interface ControlPlaneProjectRegistryItem {
   project: string
   scope_path: string
@@ -182,6 +184,7 @@ export async function setProjectRuntimeAttributes(
   options?: ControlPlaneClientOptions,
 ): Promise<ProjectAttributesResponse> {
   // 把project里的/替换成_
+  const origin_project = project;
   project = project.replace(/\//g, '_')
   const encodedProject = encodeURIComponent(project)
   const response = await fetch(
@@ -193,8 +196,12 @@ export async function setProjectRuntimeAttributes(
     },
   )
 
-  console.warn('Response from setProjectRuntimeAttributes:', response)
   await throwOnHttpError(response)
+
+  // 成功后通过事件总线通知 UI 层，将 inform 消息加入聊天面板
+  const inform = "already set attributes: " + JSON.stringify(attributes) + " for project: " + origin_project
+  emit('chat:inform', inform)
+
   return response.json() as Promise<ProjectAttributesResponse>
 }
 
